@@ -94,6 +94,17 @@
       <div class="panel-heading"><h2 id="context-heading" class="section-title"><svg class="icon" aria-hidden="true"><use href="#i-monitor"/></svg>探测环境</h2></div>
       <dl class="context-grid"><div><dt>探测路径</dt><dd id="route-detail">—</dd></div><div><dt>系统代理</dt><dd id="proxy-detail">—</dd></div><div><dt>首选语言</dt><dd id="language-detail">—</dd></div><div><dt>Claude Code CLI</dt><dd id="cli-detail">—</dd></div></dl>
     </section>
+    <section class="panel guard-panel" aria-labelledby="guard-heading">
+      <div><h2 id="guard-heading" class="section-title"><svg class="icon" aria-hidden="true"><use href="#i-route"/></svg>OneVPN 切换保护</h2>
+        <p>换节点前，先锁定通过 Preflight 启动的会话。收到确认后再切换。</p>
+        <p id="guard-feedback" role="status" hidden></p></div>
+      <div class="guard-actions">
+        <button id="launch-web" type="button" class="button primary-button" disabled>打开专用网页</button>
+        <button id="launch-desktop" type="button" class="button secondary-button" disabled>受管桌面版</button>
+        <button id="guard-lock" type="button" class="button secondary-button">锁定受管连接</button>
+      </div>
+      <p id="launch-feedback" role="status" hidden></p>
+    </section>
     <section id="history" class="panel history-panel" aria-labelledby="history-heading">
       <div class="panel-heading"><h2 id="history-heading" class="section-title"><svg class="icon" aria-hidden="true"><use href="#i-history"/></svg>检测记录</h2><span id="history-summary" class="panel-meta"></span></div>
       <div class="history-table"><div class="history-table-head" aria-hidden="true"><span>检测时间</span><span>出口地区</span><span>延迟</span><span>本机检查</span></div><div id="history-list" aria-label="检测记录"><p class="empty-copy">暂无检测记录</p></div></div>

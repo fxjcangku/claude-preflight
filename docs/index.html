@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f7f7ef">
-  <meta name="description" content="Preflight 是一个开源 macOS 网络环境检测工具。在本机查看访问 Claude 时的网络出口、请求延迟、地区和时区。">
+  <meta name="description" content="Preflight 是一个开源 macOS 网络环境检测工具。在本机查看 Cloudflare 观测到的网络出口、请求耗时，以及设备地区和时区。">
   <title>Preflight · Mac 网络环境检测</title>
   <link rel="icon" type="image/svg+xml" href="./logo.svg">
   <link rel="stylesheet" href="./intro.css">
@@ -36,7 +36,7 @@
         <div class="hero-copy">
           <p class="product-type"><span aria-hidden="true"></span>macOS 开源工具</p>
           <h1 id="hero-title">看清 Mac 的<br><em>网络环境</em><span class="title-dot">。</span></h1>
-          <p class="lead">访问 Claude 时，你的请求从哪里出去？在本机仪表盘上，一眼核对网络出口、时区和请求延迟。</p>
+          <p class="lead">打开 Claude 前，在本机仪表盘核对网络出口、时区和请求延迟。</p>
           <div class="actions">
             <a class="button" href="#install">安装 Preflight <span class="button-icon" aria-hidden="true"><svg class="icon" aria-hidden="true"><use href="#icon-install"/></svg></span></a>
             <a class="text-link" href="#features">了解功能 <svg class="icon" aria-hidden="true"><use href="#icon-next"/></svg></a>
@@ -48,7 +48,7 @@
             <span class="registration tl" aria-hidden="true"></span><span class="registration br" aria-hidden="true"></span>
             <span class="window-frame">
               <span class="window-bar" aria-hidden="true"><span class="window-dots"><i></i><i></i><i></i></span><span>Preflight</span></span>
-              <img src="./preview.png" width="1440" height="1000" alt="Preflight 仪表盘示例，包含网络出口、系统和浏览器时区、延迟趋势及检测记录。" fetchpriority="high">
+              <img src="./preview.png" width="1440" height="1050" alt="Preflight 示例仪表盘，显示台湾网络出口、台北时区、延迟趋势及 OneVPN 会话控制。" fetchpriority="high">
             </span>
           </a>
           <figcaption><span><i aria-hidden="true"></i>本机仪表盘 · 示例数据</span><a href="./preview.png">查看大图 <svg class="icon" aria-hidden="true"><use href="#icon-out"/></svg></a></figcaption>
@@ -63,7 +63,7 @@
               <span class="node node-first"></span><span class="route-segment"></span><span class="node node-middle"></span><span class="route-segment route-end"></span><span class="node node-last"></span>
             </div>
             <h3>请求的出口</h3>
-            <p>查看 Claude 域名返回的公网 IP 和地区，核对这次请求经过的代理路径。</p>
+            <p>查看 Cloudflare 返回的公网 IP 和地区，以及本次探测使用的代理路径。</p>
           </article>
           <article>
             <div class="mini-visual clock-visual" aria-hidden="true"><i></i><i></i><i></i></div>
@@ -78,19 +78,26 @@
         </div>
       </section>
 
+      <section class="guard-section section" aria-labelledby="guard-title">
+        <div><p class="section-label">OneVPN 连接保护</p><h2 id="guard-title">切换节点前，先锁定连接。</h2></div>
+        <div><p>在面板点「锁定受管连接」，看到已锁定的会话数后再切换。中继会关闭已有连接，客户端里的工作可以保留。</p><p>面板可以打开专用网页或受管桌面版。自动检测有时间间隔，锁定的会话需要重新受管启动才能联网。</p>
+        <p>原生桌面版需要 LuLu 规则，并在 Claude 配置描述文件里把 <code>egressProxyUrl</code> 设为 <code>http://127.0.0.1:47836</code>。</p>
+        <a class="text-link" href="https://github.com/fxjcangku/claude-preflight#onevpn-断线与换节点">查看各客户端的保护范围 <span aria-hidden="true">↗</span></a></div>
+      </section>
       <section id="privacy" class="privacy section" aria-labelledby="privacy-title">
         <div><p class="section-label">隐私</p><h2 id="privacy-title">检测记录留在本机。</h2></div>
-        <div class="privacy-copy"><p>无需登录。仪表盘在本机运行，最近 60 次检测保存在内存里，结束服务即清除。</p><p>网络检测仅向 <code>https://claude.ai/cdn-cgi/trace</code> 发送 HTTPS 请求。这个端点会看到本次请求的出口 IP。</p></div>
+        <div class="privacy-copy"><p>无需登录。仪表盘在本机运行，最近 60 次检测保存在内存里，结束服务即清除。</p><p>仪表盘和 <code>check</code> 向 <code>www.cloudflare.com</code> 查询当前出口 IP 和地区。受管启动先验证 OneVPN，再通过它向 <code>claude.ai</code> 核对出口。</p></div>
       </section>
 
       <section id="install" class="install section" aria-labelledby="install-title">
-        <div class="install-copy"><p class="section-label">开始使用</p><h2 id="install-title">在你的 Mac 上运行。</h2><p>准备好 Git 和 Python 3.9 或更高版本，在终端运行以下命令，即可打开本机仪表盘。</p></div>
+        <div class="install-copy"><p class="section-label">开始使用</p><h2 id="install-title">在你的 Mac 上运行。</h2><p>准备好 Git 和 Python 3.9 或更高版本，在终端运行安装命令打开仪表盘。</p></div>
         <div class="terminal">
           <div class="terminal-head"><span><svg class="icon" aria-hidden="true"><use href="#icon-terminal"/></svg>终端</span><button id="copy" hidden type="button"><svg class="icon" aria-hidden="true"><use href="#icon-copy"/></svg><span>复制命令</span></button></div>
           <pre tabindex="0" aria-label="安装并启动 Preflight 的终端命令"><code id="commands"><span class="cmd"><b>git clone</b> https://github.com/fxjcangku/claude-preflight.git</span>
 <span class="cmd"><b>cd</b> claude-preflight</span>
 <span class="cmd"><b>./claude-preflight</b></span></code></pre>
-          <div class="cli-note"><code>./claude-preflight check</code><span>在终端查看单次检测结果</span></div>
+          <div class="cli-note"><code>./claude-preflight run</code><span>检测通过后启动受管的 Claude Code CLI</span></div>
+          <div class="cli-note"><code>./claude-preflight install-watcher</code><span>为从 Dock 打开的桌面版启用监护</span></div>
           <span class="sr-only" aria-live="polite" id="copy-status"></span>
         </div>
       </section>

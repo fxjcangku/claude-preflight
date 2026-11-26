@@ -56,9 +56,9 @@ def save_target(target):
             tmp.unlink(missing_ok=True)
 
 
-def snapshot():
+def snapshot(network_probe=None):
     with ThreadPoolExecutor(max_workers=2) as workers:
-        network = workers.submit(probe_network)
+        network = workers.submit(probe_network if network_probe is None else network_probe)
         system = read_system()
         net = network.result()
     return {"time": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),

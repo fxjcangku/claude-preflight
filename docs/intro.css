@@ -188,3 +188,7 @@ footer .mark { width: 29px; height: 29px; }
   html { scroll-behavior: auto; }
   *, *::before, *::after { transition: none !important; }
 }
+.guard-section {display:grid;grid-template-columns:1fr 1fr;gap:clamp(24px,5vw,80px);align-items:start;border-top:1px solid #ced9cf;padding:clamp(34px,5vw,68px) 0}
+.guard-section p:not(.section-label) {color:#405d54;line-height:1.85;margin:0 0 .6em}
+.guard-section .text-link {margin-top:.6rem}
+@media(max-width:700px){.guard-section{grid-template-columns:1fr;gap:18px}}

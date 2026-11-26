@@ -21,6 +21,9 @@
   const timezoneInput = byId("timezone-input");
   const auto = byId("auto-refresh");
   const notice = byId("app-notice");
+  const clientNames = { web: "专用网页", desktop: "受管桌面版" };
+  const submittingClients = new Set();
+  let launchPoll, launchRevision = 0;
   let state = null;
   let editing = false;
   let revealIp = false;
@@ -235,7 +238,70 @@
     if (first !== last) { ctx.textAlign = "right"; ctx.fillText(shortTime.format(last), right, height - 8); }
   }
 
+  function renderLaunches(launches) {
+    if (!launches) return;
+    window.clearTimeout(launchPoll);
+    const lines = [];
+    let nextPoll = 0;
+    for (const [client, name] of Object.entries(clientNames)) {
+      const row = launches[client] || {};
+      const waiting = row.state === "starting" || submittingClients.has(client);
+      const running = row.state === "running";
+      const button = byId("launch-" + client);
+      button.disabled = waiting || running || !row.state;
+      button.setAttribute("aria-busy", String(waiting));
+      if (waiting) { lines.push(name + "正在检查启动条件…"); nextPoll = 1000; }
+      else if (running) { lines.push(name + "的受管进程正在运行。"); nextPoll ||= 4000; }
+      else if (row.state === "failed") lines.push(name + "：" + (row.error || "启动失败。"));
+      else if (row.state === "ended") lines.push(name + "会话已结束。");
+    }
+    const feedback = byId("launch-feedback");
+    feedback.textContent = lines.join("\n");
+    feedback.hidden = !lines.length;
+    if (nextPoll) launchPoll = window.setTimeout(pollLaunches, nextPoll);
+  }
+
+  async function pollLaunches() {
+    const revision = launchRevision;
+    try {
+      const payload = await request("/api/state");
+      if (revision === launchRevision) renderLaunches(payload.launches);
+    } catch {
+      if (revision !== launchRevision) return;
+      const feedback = byId("launch-feedback");
+      feedback.hidden = false;
+      feedback.textContent = "暂时无法确认受管客户端状态，正在重试。";
+      launchPoll = window.setTimeout(pollLaunches, 3000);
+    }
+  }
+
+  for (const client of Object.keys(clientNames)) {
+    const button = byId("launch-" + client);
+    button.addEventListener("click", async () => {
+      if (submittingClients.has(client)) return;
+      ++launchRevision;
+      submittingClients.add(client);
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+      try {
+        const payload = await request("/api/launch", {client});
+        submittingClients.delete(client);
+        renderLaunches(payload.launches);
+      } catch (error) {
+        submittingClients.delete(client);
+        button.disabled = false;
+        button.setAttribute("aria-busy", "false");
+        const message = byId("launch-feedback");
+        message.hidden = false;
+        message.textContent = clientNames[client] + "：" + error.message;
+        window.clearTimeout(launchPoll);
+        launchPoll = window.setTimeout(pollLaunches, 2000);
+      }
+    });
+  }
+
   function render(payload) {
+    renderLaunches(payload.launches);
     state = payload;
     const sample = lastSample();
     const net = sample?.network || {};
@@ -254,7 +320,7 @@
     pill.textContent = sample ? ({ pass: "符合目标", fail: "与目标不同", unknown: "无地区数据" })[exitResult] : "待检测";
     let endpoint = "";
     try { endpoint = new URL(net.endpoint).hostname; } catch { /* No endpoint before the first measurement. */ }
-    setText("exit-detail", sample ? net.error || [net.country, endpoint].filter(Boolean).join(" · ") : "");
+    setText("exit-detail", sample ? [endpoint && "探测主机 " + endpoint, net.error].filter(Boolean).join(" · ") : "");
     renderIp();
     const duration = latency(sample);
     setText("latency-value", duration ?? defaultMark);
@@ -358,6 +424,26 @@
     } finally { lock(null); }
   });
   refresh.addEventListener("click", check);
+  byId("guard-lock").addEventListener("click", async () => {
+    const button = byId("guard-lock"), message = byId("guard-feedback");
+    button.disabled = true;
+    message.hidden = false;
+    message.textContent = "正在等待受管会话确认…";
+    try {
+      const response = await fetch("/api/lock", {method: "POST", headers: {"Content-Type": "application/json"},
+        body: "{}", signal: AbortSignal.timeout(20000)});
+      if (!response.ok) throw Error();
+      const result = await response.json();
+      if (result.unconfirmed) {
+        message.textContent = `已确认 ${result.confirmed} 个，另有 ${result.unconfirmed} 个未确认。请先保留当前节点。`;
+      } else if (result.confirmed || result.cancelled) {
+        message.textContent = `已锁定 ${result.confirmed} 个受管会话，取消 ${result.cancelled || 0} 个待启动会话。切换节点后可重新启动。`;
+      } else {
+        message.textContent = "当前没有受管会话。普通浏览器标签页和独立启动的 App 不在锁定范围。";
+      }
+    } catch { message.textContent = "未收到本机锁定确认，请先保留当前节点。"; }
+    finally { button.disabled = false; }
+  });
   byId("ip-toggle").addEventListener("click", () => { revealIp = !revealIp; renderIp(); });
   function schedule() {
     clearInterval(intervalId);

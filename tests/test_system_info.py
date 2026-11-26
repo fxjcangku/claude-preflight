@@ -27,6 +27,13 @@ class SystemInfoTests(unittest.TestCase):
         self.assertIs(result["proxy_enabled"], True)
         self.assertEqual(result["proxy_summary"], "HTTPS")
 
+    def test_automatic_timezone_reads_coretime_and_unknown_stays_unknown(self):
+        for value, expected in (("1", True), ("0", False), ("2", None), (None, None)):
+            with self.subTest(value=value), patch.object(system_info, "_read_command", return_value=value) as read:
+                self.assertIs(system_info._automatic_timezone(), expected)
+                self.assertIn("TMIsAutomaticTimeZoneEnabled", read.call_args.args[-1])
+                self.assertNotIn("TMSet", read.call_args.args[-1])
+
     def test_missing_macos_preferences_are_unknown(self):
         with patch.object(system_info.sys, "platform", "darwin"), \
              patch.object(system_info, "_read_command", return_value=None):

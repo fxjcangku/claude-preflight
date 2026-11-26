@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from .core import evaluate, load_target, save_target, snapshot, validate_target
+from .desktop_launch import LocalLaunches
 
 
 _STATIC = Path(__file__).resolve().parent / "static"
@@ -38,6 +39,8 @@ class _State:
     def __init__(self):
         self.lock = threading.Lock()
         self.target = load_target()
+        self.lifecycle_lock = threading.Lock()
+        self.launches = LocalLaunches()
         self.history = deque(maxlen=60)
         self.pending = None
 
@@ -48,6 +51,7 @@ class _State:
         return {
             "target": target,
             "history": history,
+            "launches": self.launches.status(),
             "assessment": evaluate(history[-1], target) if history else None,
         }
 
@@ -173,9 +177,28 @@ class _Handler(BaseHTTPRequestHandler):
             else:
                 raise _RequestError(404, "资源不存在")
         else:
-            if path not in ("/api/check", "/api/settings"):
+            if path not in ("/api/check", "/api/settings", "/api/lock", "/api/launch"):
                 raise _RequestError(404, "资源不存在")
             data = self._body()
+            if path == "/api/launch":
+                if set(data) != {"client"} or data["client"] not in ("web", "desktop"):
+                    raise _RequestError(400, "请选择专用网页或 Claude 桌面版")
+                try:
+                    with state.lifecycle_lock:
+                        state.launches.launch(data["client"])
+                except ValueError as exc:
+                    raise _RequestError(409, str(exc)) from None
+                self._json(202, state.read())
+                return
+            if path == "/api/lock":
+                if data:
+                    raise _RequestError(400, "锁网请求应为空对象")
+                from .guard import lock_sessions
+                with state.lifecycle_lock:
+                    cancelled = state.launches.cancel_starting()
+                    confirmed, uncertain = lock_sessions()
+                self._json(200, {"confirmed": confirmed, "unconfirmed": uncertain, "cancelled": cancelled})
+                return
             if path == "/api/check":
                 if data:
                     raise _RequestError(400, "检测请求应为空对象")

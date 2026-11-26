@@ -44,7 +44,8 @@ class LocalServerTests(unittest.TestCase):
     def test_initial_state_and_resources(self):
         status, result = self.request("GET", "/api/state")
         self.assertEqual(status, 200)
-        self.assertEqual(json.loads(result), {"history": [], "target": TARGET, "assessment": None})
+        self.assertEqual(json.loads(result), {"history": [], "target": TARGET, "assessment": None,
+                                              "launches": self.service.state.launches.status()})
         status, home = self.request("GET", "/")
         self.assertEqual(status, 200)
         self.assertIn(b"<html", home)
@@ -58,6 +59,21 @@ class LocalServerTests(unittest.TestCase):
         self.assertEqual(self.request("GET", "/api/state", headers={"Host": "else.invalid"})[0], 403)
         for path in ("/../preflight/core.py", "/about/%2e%2e/.git/config", "/static/", "/etc/passwd"):
             self.assertEqual(self.request("GET", path)[0], 404)
+
+    def test_client_launch_requires_exact_payload_and_local_origin(self):
+        manager = self.service.state.launches
+        with patch.object(manager, "launch") as launch:
+            self.assertEqual(self.request("POST", "/api/launch", '{"client":"web"}',
+                                        {"Content-Type": "application/json"})[0], 403)
+            for data in ({"client": "cli"}, {"client": ["web"]}, {"client": "web", "args": []}):
+                self.assertEqual(self.post("/api/launch", data)[0], 400)
+            launch.assert_not_called()
+            status, body = self.post("/api/launch", {"client": "web"})
+            self.assertEqual(status, 202)
+            self.assertIn("launches", json.loads(body))
+            launch.assert_called_once_with("web")
+            launch.side_effect = ValueError("这个客户端已在启动或运行中")
+            self.assertEqual(self.post("/api/launch", {"client": "web"})[0], 409)
 
     def test_invalid_content(self):
         headers = {"Origin": self.service.origin}

@@ -9,8 +9,8 @@ from urllib.parse import urlsplit
 from urllib.request import getproxies_environment, proxy_bypass_environment
 
 
-ENDPOINT = "https://claude.ai/cdn-cgi/trace"
-_HOST = "claude.ai"
+_HOST = "www.cloudflare.com"
+ENDPOINT = f"https://{_HOST}/cdn-cgi/trace"
 _ISO_COUNTRIES = frozenset("""
 AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM
 BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX
@@ -50,7 +50,7 @@ def _select_proxy():
     bypass = subprocess.run(
         [sys.executable, "-I", "-c",
          "from urllib.request import proxy_bypass_macosx_sysconf as bypass; "
-         "print(int(bypass('claude.ai')))"],
+         f"print(int(bypass({_HOST!r})))"],
         capture_output=True, check=True, timeout=3,
     ).stdout.strip()
     if bypass == b"1":
@@ -83,7 +83,7 @@ def _proxy_url(value):
     raise ValueError("代理地址格式不受支持")
 
 
-def _trace(body):
+def _trace(body, expected_host):
     try:
         lines = body.decode("ascii").splitlines()
         fields = {}
@@ -96,11 +96,11 @@ def _trace(body):
         address = ipaddress.ip_address(fields["ip"])
         if (country not in _ISO_COUNTRIES or not address.is_global
                 or address.is_multicast or "%" in fields["ip"]
-                or fields.get("h") != _HOST):
+                or fields.get("h") != expected_host):
             raise ValueError
         return country, str(address)
     except (KeyError, UnicodeError, ValueError):
-        raise ValueError("响应缺少有效的 Claude 域名、公网 IP 或地区信息") from None
+        raise ValueError("响应缺少匹配的探测主机、公网 IP 或地区信息") from None
 
 
 def probe_network():
@@ -130,7 +130,7 @@ def probe_network():
         elif result["http_status"] != 200:
             result["error"] = "探测端点未返回 HTTP 200"
         else:
-            result["country"], result["ip"] = _trace(body)
+            result["country"], result["ip"] = _trace(body, _HOST)
     except subprocess.TimeoutExpired:
         result["error"] = "网络探测超时"
     except (OSError, subprocess.SubprocessError, UnicodeError):

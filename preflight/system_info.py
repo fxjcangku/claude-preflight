@@ -92,6 +92,20 @@ def _proxy_state(output: Optional[str]):
     return bool(enabled), "、".join(enabled) if enabled else "未启用"
 
 
+def _automatic_timezone() -> Optional[bool]:
+    # CoreTime reads timed's current setting. The legacy timezone.auto plist
+    # can retain a different value. Isolate the framework call with a timeout.
+    probe = """import ctypes
+core_time = ctypes.CDLL("/System/Library/PrivateFrameworks/CoreTime.framework/CoreTime")
+enabled = core_time.TMIsAutomaticTimeZoneEnabled
+enabled.argtypes = []
+enabled.restype = ctypes.c_ubyte
+print(enabled())
+"""
+    value = _read_command(sys.executable, "-I", "-c", probe)
+    return {"1": True, "0": False}.get(value)
+
+
 def read_system() -> dict:
     """Return a sanitized snapshot. Unavailable settings have the value None."""
     locale = language = script = region = automatic = None
@@ -108,10 +122,7 @@ def read_system() -> dict:
         language = first.group(1) if first else None
         locale_script, region = _locale_parts(locale)
         script = _locale_parts(language)[0] or locale_script
-        value = _read_command(
-            defaults, "read", "/Library/Preferences/com.apple.timezone.auto", "Active"
-        )
-        automatic = {"1": True, "0": False}.get(value)
+        automatic = _automatic_timezone()
         proxy_enabled, proxy_summary = _proxy_state(
             _read_command("/usr/sbin/scutil", "--proxy")
         )
