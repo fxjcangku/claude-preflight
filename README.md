@@ -49,7 +49,7 @@ cd claude-preflight
 
 意外断线时，中继的上游只有 OneVPN 本机端口。监护程序还会采样所选节点、隧道、进程和出口 IP；发现变化或无法确认时保持锁定。直接在 OneVPN 里换节点会有采样时间窗。如果需要在切换发生**之前**停流量，请使用上面的锁定入口。同一 Mac 的普通 Safari/Chrome 标签页、通过外部系统服务发起的请求及远程执行环境不属于这些会话。
 
-中继允许 Claude 服务使用的域名，以及邮件登录页面加载验证脚本所需的 `challenges.cloudflare.com:443`。这些 HTTPS 请求都经过同一个受管中继，锁定时一起断开。第三方 SSO、MCP 或外部工具所需的其他域名可能会被拦截。[Claude 网络要求](https://code.claude.com/docs/en/desktop#network-access-requirements)
+中继允许 Claude 服务使用的域名，以及邮件登录页面加载验证脚本所需的 `challenges.cloudflare.com:443`。Google 账号选择器也可通过中继访问 `accounts.google.com`，并从 `www.gstatic.com` 和 `ssl.gstatic.com` 加载登录资源。这些 HTTPS 请求都经过同一个受管中继，锁定时一起断开。第三方 SSO、MCP 或外部工具所需的其他域名可能会被拦截。[Claude 网络要求](https://code.claude.com/docs/en/desktop#network-access-requirements)
 
 ## 从 Dock 打开原生桌面版
 

@@ -11,6 +11,7 @@ import hashlib
 import ipaddress
 import json
 import os
+import queue
 import re
 import secrets
 import shutil
@@ -36,6 +37,8 @@ _DESKTOP = "/Applications/Claude.app/Contents/MacOS/Claude"
 DESKTOP_PORT = 47836
 _LOCAL_INTERVAL = 0.8
 _IP_INTERVAL = 4.0
+_TRACE_SECONDS = 4
+_TRACE_HEDGE_DELAY = 0.7
 _ENV = {"LC_ALL": "C", "PATH": os.defpath}
 
 
@@ -155,22 +158,29 @@ def _identity():
     return _Identity(gui[0], core[0], port, tunnels, choice, os.path.realpath("/etc/localtime"))
 
 
-def _trace_via_port(port):
+def _trace_via_port(port, seconds=_TRACE_SECONDS):
     # Explicit CONNECT through the exact relay used by the client. No proxy
     # environment, curlrc, redirects, credentials or provider API are involved.
     result = subprocess.run([
         "/usr/bin/curl", "-q", "--silent", "--proto", "=https", "--noproxy", "",
-        "--proxy", f"http://127.0.0.1:{port}", "--connect-timeout", "2", "--max-time", "4",
+        "--proxy", f"http://127.0.0.1:{port}", "--connect-timeout", str(min(2, seconds)),
+        "--max-time", str(seconds),
         "--max-filesize", "16384", "--write-out", "\n%{http_code}", _GUARDED_ENDPOINT
-    ], stdin=subprocess.DEVNULL, capture_output=True, check=True, timeout=5, env=_ENV)
+    ], stdin=subprocess.DEVNULL, capture_output=True, check=True, timeout=seconds + 1, env=_ENV)
     body, sep, status = result.stdout.rpartition(b"\n")
     if not sep or status != b"200":
         raise ValueError("无法确认受管通道的出口 IP")
     return _trace(body, _GUARDED_HOST)
 
 
-def _trace_ip(port):
-    return _trace_via_port(port)[1]
+def _trace_ip(port, deadline=None):
+    if deadline is None:
+        return _trace_via_port(port)[1]
+    # Round down to curl's millisecond granularity, never to zero (unlimited).
+    millis = int((deadline - time.monotonic()) * 1000)
+    if millis < 1:
+        raise TimeoutError("受管探测已到截止时间")
+    return _trace_via_port(port, millis / 1000)[1]
 
 
 def probe_guarded_network():
@@ -371,14 +381,60 @@ def lock_guards():
     return 2 if errors else 0
 
 
+def _confirm_remote(port, expected, stop, latch):
+    """Corroborate a slow trace, without waiting through any unconfirmed failure."""
+    started = time.monotonic()
+    deadline = started + _TRACE_SECONDS
+    hedge_at = started + _TRACE_HEDGE_DELAY
+    results = queue.Queue()
+
+    def probe():
+        try:
+            address = _trace_ip(port, deadline=deadline)
+        except Exception as exc:
+            results.put((None, exc))
+        else:
+            results.put((address, None))
+
+    def start_probe():
+        threading.Thread(target=probe, name="preflight-trace", daemon=True).start()
+
+    start_probe()
+    pending, confirmed, hedged = 1, False, False
+    while pending:
+        wake = deadline if hedged else min(hedge_at, deadline)
+        try:
+            address, error = results.get(timeout=max(0, wake - time.monotonic()))
+        except queue.Empty:
+            if time.monotonic() >= deadline or hedged:
+                raise TimeoutError("无法在原探测期限内确认出口") from None
+            if stop.is_set() or latch.locked.is_set():
+                return
+            start_probe()
+            pending += 1
+            hedged = True
+            continue
+        if time.monotonic() >= deadline:
+            raise TimeoutError("无法在原探测期限内确认出口")
+        pending -= 1
+        if error is not None:
+            # Only curl's network timeout can be corroborated, and only by
+            # an already completed same-window observation of the expected IP.
+            if confirmed and isinstance(error, subprocess.CalledProcessError) and error.returncode == 28:
+                continue
+            raise error
+        if address != expected:
+            raise ValueError("受管通道的出口 IP 已变化")
+        confirmed = True
+
+
 def _watch(latch, stop, baseline, expected, port):
     def local():
         if _identity() != baseline:
             raise ValueError("OneVPN 进程、所选节点、监听器或隧道已变化")
 
     def remote():
-        if _trace_ip(port) != expected:
-            raise ValueError("受管通道的出口 IP 已变化")
+        _confirm_remote(port, expected, stop, latch)
 
     def loop(check, interval, reason):
         while not stop.wait(interval) and not latch.locked.is_set():

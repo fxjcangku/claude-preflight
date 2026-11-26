@@ -72,6 +72,19 @@ class RelayTests(unittest.TestCase):
         self.assert_closed(client)
         self.assert_closed(proxy)
 
+    def test_google_sign_in_and_static_hosts_use_the_pinned_proxy(self):
+        for host in ("accounts.google.com", "www.gstatic.com", "ssl.gstatic.com"):
+            with self.subTest(host=host):
+                client = self.client()
+                request = f"CONNECT {host}:443 HTTP/1.1\r\nHost: {host}:443\r\n\r\n".encode()
+                client.sendall(request)
+                upstream = self.upstream()
+                self.assertEqual(self.read_to(upstream, b"\r\n\r\n"), request)
+                upstream.sendall(b"HTTP/1.1 200 OK\r\n\r\n")
+                self.assertIn(b" 200 ", self.read_to(client, b"\r\n\r\n"))
+                client.close()
+                upstream.close()
+
     def test_reject_unapproved_targets_and_malformed_requests_before_upstream(self):
         requests = [
             b"GET / HTTP/1.0\r\n",
@@ -81,6 +94,9 @@ class RelayTests(unittest.TestCase):
             b"CONNECT cloudflare.com:443 HTTP/1.0\r\n",
             b"CONNECT other.challenges.cloudflare.com:443 HTTP/1.0\r\n",
             b"CONNECT challenges.cloudflare.com.example.test:443 HTTP/1.0\r\n",
+            b"CONNECT accounts.google.com.example.test:443 HTTP/1.0\r\n",
+            b"CONNECT drive.google.com:443 HTTP/1.0\r\n",
+            b"CONNECT notwww.gstatic.com:443 HTTP/1.0\r\n",
             b"CONNECT bad..claude.ai:443 HTTP/1.0\r\n",
             b"CONNECT claude.ai:80 HTTP/1.0\r\n",
             b"CONNECT claude.ai@other:443 HTTP/1.0\r\n",

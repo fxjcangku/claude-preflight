@@ -152,6 +152,149 @@ class GuardTests(unittest.TestCase):
                 finally:
                     stop.set()
 
+    def test_quick_remote_check_keeps_one_request(self):
+        with patch.object(guard, "_trace_ip", return_value="baseline") as probe:
+            guard._confirm_remote(31844, "baseline", threading.Event(), guard._Latch())
+        probe.assert_called_once()
+        self.assertEqual(probe.call_args.args, (31844,))
+
+    def test_overlapping_probes_share_same_port_and_deadline_and_do_not_mask_drift(self):
+        timeout = subprocess.CalledProcessError(28, ["curl"])
+        tls_error = subprocess.CalledProcessError(60, ["curl"])
+        # The first column is the slow primary outcome. The hedge completes first.
+        for primary, backup, expected_error in (
+            (timeout, "baseline", None),
+            ("changed", "baseline", ValueError),
+            (tls_error, "baseline", subprocess.CalledProcessError),
+            ("baseline", "changed", ValueError),
+            (timeout, timeout, subprocess.CalledProcessError),
+            ("baseline", timeout, subprocess.CalledProcessError),
+        ):
+            with self.subTest(primary=primary, backup=backup):
+                enqueued = threading.Event()
+                first = threading.Event()
+                primary_done = threading.Event()
+                original_queue = guard.queue.Queue()
+                original_put = original_queue.put
+                def put(item):
+                    original_put(item)
+                    enqueued.set()
+                original_queue.put = put
+
+                def respond(port, deadline):
+                    if not first.is_set():
+                        first.set()
+                        if not enqueued.wait(1):
+                            raise RuntimeError("backup did not finish")
+                        primary_done.set()
+                        outcome = primary
+                    else:
+                        outcome = backup
+                    if isinstance(outcome, Exception):
+                        raise outcome
+                    return outcome
+
+                with patch.object(guard.queue, "Queue", return_value=original_queue), \
+                     patch.object(guard, "_TRACE_HEDGE_DELAY", 0.003), \
+                     patch.object(guard, "_trace_ip", side_effect=respond) as probe:
+                    result = self.assertRaises(expected_error) if expected_error else contextlib.nullcontext()
+                    with result:
+                        guard._confirm_remote(31022, "baseline", threading.Event(), guard._Latch())
+                    self.assertTrue(primary_done.wait(1))
+                    self.assertEqual(probe.call_count, 2)
+                    self.assertEqual(probe.call_args_list[0], probe.call_args_list[1])
+                    self.assertEqual(probe.call_args_list[0].args, (31022,))
+
+    def test_failure_before_confirmation_closes_live_local_relay_without_waiting(self):
+        stop = threading.Event()
+        second_started, finish_backup = threading.Event(), threading.Event()
+        counter = []
+        def respond(port, deadline):
+            counter.append(1)
+            if len(counter) == 1:
+                self.assertTrue(second_started.wait(1))
+                raise subprocess.CalledProcessError(28, ["curl"])
+            second_started.set()
+            finish_backup.wait(2)
+            return "baseline"
+
+        with socket.socket() as upstream:
+            upstream.bind(("127.0.0.1", 0))
+            upstream.listen()
+            upstream.settimeout(1)
+            relay = guard.LockedRelay(upstream.getsockname()[1])
+            latch = guard._Latch()
+            latch.attach(relay)
+            try:
+                with socket.create_connection(("127.0.0.1", relay.port), timeout=1) as client:
+                    client.sendall(b"CONNECT claude.ai:443 HTTP/1.1\r\nHost: claude.ai\r\n\r\n")
+                    peer, _ = upstream.accept()
+                    with peer:
+                        self.assertIn(b"CONNECT claude.ai:443", peer.recv(1024))
+                        peer.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                        self.assertIn(b" 200 ", client.recv(1024))
+                        with patch.object(guard, "_IP_INTERVAL", 0.003), \
+                             patch.object(guard, "_LOCAL_INTERVAL", 10), \
+                             patch.object(guard, "_TRACE_HEDGE_DELAY", 0.003), \
+                             patch.object(guard, "_trace_ip", side_effect=respond), \
+                             contextlib.redirect_stderr(io.StringIO()):
+                            guard._watch(latch, stop, "same", "baseline", relay.port)
+                            self.assertTrue(latch.locked.wait(1))
+                            self.assertFalse(finish_backup.is_set())
+                            self.assertEqual(client.recv(1), b"")
+                            finish_backup.set()
+                            self.assertTrue(latch.locked.is_set())
+            finally:
+                stop.set()
+                finish_backup.set()
+                relay.close()
+
+    def test_manual_or_local_lock_is_independent_of_inflight_remote_check(self):
+        for source in ("manual", "local"):
+            stop, started, finish = threading.Event(), threading.Event(), threading.Event()
+            latch, relay = guard._Latch(), Mock()
+            latch.attach(relay)
+            def pending(*args, **kwargs):
+                started.set()
+                finish.wait(1)
+                return "baseline"
+            def local():
+                return "changed" if source == "local" and started.is_set() else "original"
+            with self.subTest(source=source), patch.object(guard, "_IP_INTERVAL", 0.003), \
+                 patch.object(guard, "_LOCAL_INTERVAL", 0.005), \
+                 patch.object(guard, "_trace_ip", side_effect=pending), \
+                 patch.object(guard, "_identity", side_effect=local), \
+                 contextlib.redirect_stderr(io.StringIO()):
+                try:
+                    guard._watch(latch, stop, "original", "baseline", 31548)
+                    self.assertTrue(started.wait(1))
+                    if source == "manual":
+                        latch.lock("manual test")
+                    self.assertTrue(latch.locked.wait(0.3))
+                    self.assertFalse(finish.is_set())
+                    relay.lock.assert_called_once()
+                finally:
+                    stop.set()
+                    finish.set()
+
+    def test_hedged_check_never_extends_original_overall_deadline(self):
+        release = threading.Event()
+        def slow(*args, **kwargs):
+            release.wait(1)
+            return "baseline"
+        try:
+            with patch.object(guard, "_TRACE_SECONDS", 0.06), \
+                 patch.object(guard, "_TRACE_HEDGE_DELAY", 0.012), \
+                 patch.object(guard, "_trace_ip", side_effect=slow) as probe:
+                begin = time.monotonic()
+                with self.assertRaises(TimeoutError):
+                    guard._confirm_remote(30912, "baseline", threading.Event(), guard._Latch())
+                self.assertLess(time.monotonic() - begin, 0.4)
+                self.assertEqual(probe.call_count, 2)
+                self.assertEqual(probe.call_args_list[0], probe.call_args_list[1])
+        finally:
+            release.set()
+
     def test_desktop_and_web_refuse_handoff_or_option_overrides(self):
         with patch.object(guard, "_processes", return_value=[(122, 500, "start", guard._DESKTOP)]):
             with self.assertRaisesRegex(ValueError, "完全退出"):

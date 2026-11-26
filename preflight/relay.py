@@ -13,7 +13,8 @@ _HANDSHAKE_SECONDS = 5
 _BUFFER_LIMIT = 65536
 _HOST_ROOTS = ("anthropic.com", "claude.ai", "claude.com", "claude.app",
                "claudeusercontent.com", "claudemcpcontent.com")
-_LOGIN_VERIFICATION_HOST = "challenges.cloudflare.com"
+_SIGN_IN_HOSTS = frozenset(("challenges.cloudflare.com", "accounts.google.com",
+                            "www.gstatic.com", "ssl.gstatic.com"))
 _LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 _HEADER = re.compile(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+:[\t\x20-\x7e\x80-\xff]*")
 _CONNECTING = {0, errno.EISCONN, errno.EINPROGRESS, errno.EWOULDBLOCK, errno.EALREADY}
@@ -49,7 +50,7 @@ def _authority(header):
     if not request:
         raise _InvalidHeader()
     host = request[1].decode("ascii").lower()
-    allowed = host == _LOGIN_VERIFICATION_HOST or any(
+    allowed = host in _SIGN_IN_HOSTS or any(
         host == root or host.endswith("." + root) for root in _HOST_ROOTS)
     if (len(host) > 253 or not all(_LABEL.fullmatch(label) for label in host.split("."))
             or not allowed):
