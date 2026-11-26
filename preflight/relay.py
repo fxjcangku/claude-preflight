@@ -12,11 +12,14 @@ _HEADER_LIMIT = 16384
 _HANDSHAKE_SECONDS = 5
 _BUFFER_LIMIT = 65536
 _HOST_ROOTS = ("anthropic.com", "claude.ai", "claude.com", "claude.app",
-               "claudeusercontent.com", "claudemcpcontent.com")
+               "claudeusercontent.com", "claudemcpcontent.com", "hcaptcha.com")
 _SIGN_IN_HOSTS = frozenset(("challenges.cloudflare.com", "accounts.google.com",
                             "www.gstatic.com", "ssl.gstatic.com"))
 _LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 _HEADER = re.compile(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+:[\t\x20-\x7e\x80-\xff]*")
+_MISTYPED_HOME = re.compile(rb"(?:GET|HEAD) http://https//claude\.ai/? HTTP/1\.[01]")
+_HOME_REDIRECT = (b"HTTP/1.1 302 Found\r\nLocation: https://claude.ai/\r\n"
+                  b"Cache-Control: no-store\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
 _CONNECTING = {0, errno.EISCONN, errno.EINPROGRESS, errno.EWOULDBLOCK, errno.EALREADY}
 
 
@@ -46,6 +49,9 @@ def _receive_header(sock, deadline):
 
 def _authority(header):
     lines = header.split(b"\r\n")
+    if _MISTYPED_HOME.fullmatch(lines[0]):
+        _validate_headers(lines[1:], (b"https",), require_host=True)
+        return None
     request = re.fullmatch(rb"CONNECT ([A-Za-z0-9.-]+):443 HTTP/1\.([01])", lines[0])
     if not request:
         raise _InvalidHeader()
@@ -55,21 +61,26 @@ def _authority(header):
     if (len(host) > 253 or not all(_LABEL.fullmatch(label) for label in host.split("."))
             or not allowed):
         raise _InvalidHeader()
+    _validate_headers(lines[1:], (request[1].lower(), request[1].lower() + b":443"),
+                      require_host=request[2] == b"1")
+    return host + ":443"
+
+
+def _validate_headers(lines, allowed_hosts, require_host):
     host_header = None
-    for line in lines[1:]:
+    for line in lines:
         if not _HEADER.fullmatch(line):
             raise _InvalidHeader()
         name, value = line.split(b":", 1)
         name, value = name.lower(), value.strip()
         if name == b"host":
-            if host_header is not None or value.lower() not in (request[1].lower(), request[1].lower() + b":443"):
+            if host_header is not None or value.lower() not in allowed_hosts:
                 raise _InvalidHeader()
             host_header = value
         if name == b"transfer-encoding" or (name == b"content-length" and value != b"0"):
             raise _InvalidHeader()
-    if request[2] == b"1" and host_header is None:
+    if require_host and host_header is None:
         raise _InvalidHeader()
-    return host + ":443"
 
 
 def _wait(sock, writing, deadline):
@@ -126,16 +137,29 @@ class LockedRelay:
                 raise ValueError("本会话已锁定")
             self._armed = True
 
-    def lock(self):
-        # All nonblocking socket writes and upstream connects hold this same
-        # mutex. A packet already passed to the OS cannot be recalled.
+    def _disconnect(self, permanent):
+        # Socket writes and upstream connects share this mutex. Bytes already
+        # submitted to the OS cannot be recalled.
         with self._guard:
-            self._locked = True
+            if permanent:
+                self._locked = True
+            self._armed = False
             for sock in self._sockets:
                 _dispose(sock)
             self._sockets.clear()
-        # Keep the port reserved until close(), including while a locked child
-        # is winding down. New clients are immediately disconnected.
+            return tuple(self._workers)
+
+    def pause(self):
+        """Cut active tunnels and keep the port reserved for this session."""
+        workers = self._disconnect(permanent=False)
+        # The remote observer is the sole caller allowed to resume. Wait for
+        # every old worker (including one between parsing and connect_ex) to
+        # exit before it can verify the route and admit new tunnels.
+        for worker in workers:
+            worker.join()
+
+    def lock(self):
+        self._disconnect(permanent=True)
 
     def close(self):
         self.lock()
@@ -173,8 +197,8 @@ class LockedRelay:
 
     def _write(self, sock, data):
         with self._guard:
-            if self._locked:
-                raise ConnectionError("locked")
+            if not self._armed or self._locked:
+                raise ConnectionError("relay inactive")
             try:
                 sent = sock.send(data)
             except BlockingIOError:
@@ -190,8 +214,8 @@ class LockedRelay:
 
     def _connect(self, upstream, deadline):
         with self._guard:
-            if self._locked:
-                raise ConnectionError("locked")
+            if not self._armed or self._locked:
+                raise ConnectionError("relay inactive")
             upstream.setblocking(False)
             self._sockets.add(upstream)
             code = upstream.connect_ex(("127.0.0.1", self._upstream_port))
@@ -208,6 +232,11 @@ class LockedRelay:
             try:
                 header, client_data = _receive_header(client, deadline)
                 authority = _authority(header)
+                if authority is None:
+                    if client_data:
+                        raise _InvalidHeader()
+                    self._send_all(client, _HOME_REDIRECT, deadline)
+                    return
             except _InvalidHeader:
                 self._send_all(client, b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n", deadline)
                 return

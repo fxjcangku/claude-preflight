@@ -47,9 +47,9 @@ cd claude-preflight
 
 **切换节点前**，在面板点击「锁定受管连接」，或在另一个终端运行 `./claude-preflight lock`。等到已确认锁定会话数后再切换。锁定会关闭中继上的既有连接，并拒绝该会话的新连接。切换后重新受管启动可恢复。
 
-意外断线时，中继的上游只有 OneVPN 本机端口。监护程序还会采样所选节点、隧道、进程和出口 IP；发现变化或无法确认时保持锁定。直接在 OneVPN 里换节点会有采样时间窗。如果需要在切换发生**之前**停流量，请使用上面的锁定入口。同一 Mac 的普通 Safari/Chrome 标签页、通过外部系统服务发起的请求及远程执行环境不属于这些会话。
+出口探测未能确认 IP 时，中继立即关闭已有连接并拒绝新连接。监护程序只通过重新核验的原 OneVPN 端口重试，间隔从 2 秒增至 4 秒、再到 8 秒。确认节点和出口 IP 均与启动时一致后，中继自动恢复。若 OneVPN 进程、代理端口、节点、隧道或系统时区发生变化或无法核验，或确认出口 IP 已变，会话会保持锁定，直到重新受管启动。直接在 OneVPN 里换节点会有采样时间窗。如果需要在切换发生**之前**停流量，请使用上面的锁定入口。同一 Mac 的普通 Safari/Chrome 标签页、通过外部系统服务发起的请求及远程执行环境不属于这些会话。
 
-中继允许 Claude 服务使用的域名，以及邮件登录页面加载验证脚本所需的 `challenges.cloudflare.com:443`。Google 账号选择器也可通过中继访问 `accounts.google.com`，并从 `www.gstatic.com` 和 `ssl.gstatic.com` 加载登录资源。这些 HTTPS 请求都经过同一个受管中继，锁定时一起断开。第三方 SSO、MCP 或外部工具所需的其他域名可能会被拦截。[Claude 网络要求](https://code.claude.com/docs/en/desktop#network-access-requirements)
+中继允许 Claude 服务使用的域名，以及邮件登录页面加载验证脚本所需的 `challenges.cloudflare.com:443`。登录页使用 hCaptcha 时，中继允许通过 HTTPS 从 `hcaptcha.com` 及其子域加载验证脚本和相关资源。Google 账号选择器也可通过中继访问 `accounts.google.com`，并从 `www.gstatic.com` 和 `ssl.gstatic.com` 加载登录资源。这些 HTTPS 请求都经过同一个受管中继，锁定时一起断开。第三方 SSO、MCP 或外部工具所需的其他域名可能会被拦截。[Claude 网络要求](https://code.claude.com/docs/en/desktop#network-access-requirements) · [hCaptcha 官方资源域名说明](https://docs.hcaptcha.com/#content-security-policy-settings)
 
 ## 从 Dock 打开原生桌面版
 

@@ -38,7 +38,8 @@ DESKTOP_PORT = 47836
 _LOCAL_INTERVAL = 0.8
 _IP_INTERVAL = 4.0
 _TRACE_SECONDS = 4
-_TRACE_HEDGE_DELAY = 0.7
+_STARTUP_TRACE_SECONDS = 8
+_RETRY_DELAYS = (2, 4, 8)
 _ENV = {"LC_ALL": "C", "PATH": os.defpath}
 
 
@@ -158,12 +159,12 @@ def _identity():
     return _Identity(gui[0], core[0], port, tunnels, choice, os.path.realpath("/etc/localtime"))
 
 
-def _trace_via_port(port, seconds=_TRACE_SECONDS):
+def _trace_via_port(port, seconds=_STARTUP_TRACE_SECONDS, connect_timeout=5):
     # Explicit CONNECT through the exact relay used by the client. No proxy
     # environment, curlrc, redirects, credentials or provider API are involved.
     result = subprocess.run([
         "/usr/bin/curl", "-q", "--silent", "--proto", "=https", "--noproxy", "",
-        "--proxy", f"http://127.0.0.1:{port}", "--connect-timeout", str(min(2, seconds)),
+        "--proxy", f"http://127.0.0.1:{port}", "--connect-timeout", str(min(connect_timeout, seconds)),
         "--max-time", str(seconds),
         "--max-filesize", "16384", "--write-out", "\n%{http_code}", _GUARDED_ENDPOINT
     ], stdin=subprocess.DEVNULL, capture_output=True, check=True, timeout=seconds + 1, env=_ENV)
@@ -180,7 +181,7 @@ def _trace_ip(port, deadline=None):
     millis = int((deadline - time.monotonic()) * 1000)
     if millis < 1:
         raise TimeoutError("受管探测已到截止时间")
-    return _trace_via_port(port, millis / 1000)[1]
+    return _trace_via_port(port, millis / 1000, connect_timeout=2)[1]
 
 
 def probe_guarded_network():
@@ -277,6 +278,13 @@ class _Latch:
             if self.locked.is_set():
                 relay.lock()
                 raise ValueError("启动期间已收到锁定请求")
+
+    def resume(self, stop):
+        with self.mutex:
+            if self.locked.is_set() or stop.is_set():
+                return False
+            self.relay.activate()
+            return True
 
     def lock(self, reason):
         with self.mutex:
@@ -382,72 +390,78 @@ def lock_guards():
 
 
 def _confirm_remote(port, expected, stop, latch):
-    """Corroborate a slow trace, without waiting through any unconfirmed failure."""
-    started = time.monotonic()
-    deadline = started + _TRACE_SECONDS
-    hedge_at = started + _TRACE_HEDGE_DELAY
-    results = queue.Queue()
+    """Only a fresh, timely observation can authorize forwarding."""
+    deadline = time.monotonic() + _TRACE_SECONDS
+    results = queue.Queue(maxsize=1)
 
     def probe():
         try:
             address = _trace_ip(port, deadline=deadline)
+            if address != expected and not stop.is_set():
+                # A positive drift result still counts if curl finishes late.
+                latch.lock("已确认受管通道的出口 IP 变化")
+            results.put(None)
         except Exception as exc:
-            results.put((None, exc))
-        else:
-            results.put((address, None))
+            results.put(exc)
 
-    def start_probe():
-        threading.Thread(target=probe, name="preflight-trace", daemon=True).start()
-
-    start_probe()
-    pending, confirmed, hedged = 1, False, False
-    while pending:
-        wake = deadline if hedged else min(hedge_at, deadline)
-        try:
-            address, error = results.get(timeout=max(0, wake - time.monotonic()))
-        except queue.Empty:
-            if time.monotonic() >= deadline or hedged:
-                raise TimeoutError("无法在原探测期限内确认出口") from None
-            if stop.is_set() or latch.locked.is_set():
-                return
-            start_probe()
-            pending += 1
-            hedged = True
-            continue
-        if time.monotonic() >= deadline:
-            raise TimeoutError("无法在原探测期限内确认出口")
-        pending -= 1
-        if error is not None:
-            # Only curl's network timeout can be corroborated, and only by
-            # an already completed same-window observation of the expected IP.
-            if confirmed and isinstance(error, subprocess.CalledProcessError) and error.returncode == 28:
-                continue
-            raise error
-        if address != expected:
-            raise ValueError("受管通道的出口 IP 已变化")
-        confirmed = True
+    threading.Thread(target=probe, name="preflight-trace", daemon=True).start()
+    try:
+        error = results.get(timeout=max(0, deadline - time.monotonic()))
+    except queue.Empty:
+        raise TimeoutError("未能在探测期限内确认出口") from None
+    if time.monotonic() >= deadline:
+        raise TimeoutError("未能在探测期限内确认出口")
+    if error is not None:
+        raise error
 
 
 def _watch(latch, stop, baseline, expected, port):
-    def local():
-        if _identity() != baseline:
-            raise ValueError("OneVPN 进程、所选节点、监听器或隧道已变化")
+    def local_ok():
+        try:
+            if _identity() == baseline:
+                return True
+        except Exception:
+            pass
+        latch.lock("OneVPN 节点、代理、隧道或系统时区变化，或状态无法确认")
+        return False
 
-    def remote():
-        _confirm_remote(port, expected, stop, latch)
-
-    def loop(check, interval, reason):
-        while not stop.wait(interval) and not latch.locked.is_set():
-            try:
-                check()
-            except Exception:
-                # Unexpected observer failures must also latch the relay.
-                latch.lock(reason)
+    def watch_local():
+        while not stop.wait(_LOCAL_INTERVAL) and not latch.locked.is_set():
+            if not local_ok():
                 return
-    for check, interval, reason in (
-            (local, _LOCAL_INTERVAL, "OneVPN 节点、代理、隧道或系统时区变化，或状态无法确认"),
-            (remote, _IP_INTERVAL, "出口 IP 变化，或无法确认出口")):
-        threading.Thread(target=loop, args=(check, interval, reason), daemon=True).start()
+
+    def watch_remote():
+        retries = 0
+        while not stop.is_set() and not latch.locked.is_set():
+            delay = _RETRY_DELAYS[min(retries - 1, len(_RETRY_DELAYS) - 1)] if retries else _IP_INTERVAL
+            if stop.wait(delay) or latch.locked.is_set():
+                return
+            if retries and not local_ok():
+                return
+            try:
+                # The paused relay rejects all clients. Only this diagnostic
+                # may use the original, independently revalidated upstream.
+                _confirm_remote(baseline.port if retries else port, expected, stop, latch)
+            except (OSError, ValueError, subprocess.SubprocessError):
+                if not retries:
+                    latch.relay.pause()
+                retries = min(retries + 1, len(_RETRY_DELAYS))
+                continue
+            if stop.is_set() or latch.locked.is_set():
+                return
+            if retries:
+                if not local_ok() or not latch.resume(stop):
+                    return
+                retries = 0
+
+    def supervise_remote():
+        try:
+            watch_remote()
+        except Exception:
+            latch.lock("监护程序无法继续核验受管网络")
+
+    for observer in (watch_local, supervise_remote):
+        threading.Thread(target=observer, daemon=True).start()
 
 
 @contextlib.contextmanager
