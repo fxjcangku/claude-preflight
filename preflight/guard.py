@@ -25,6 +25,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from .desktop_launch import StartupFailure, notify_dashboard
 from .network import _trace
 from .relay import LockedRelay
 
@@ -193,8 +194,10 @@ def probe_guarded_network():
         elapsed = round((time.monotonic() - started) * 1000)
         if _identity() != expected:
             raise ValueError("检测期间 OneVPN 状态已变化，已停止启动")
-    except (OSError, subprocess.SubprocessError, UnicodeError):
-        raise ValueError("无法确认 OneVPN 受管代理或完成受管网络检测，已停止启动") from None
+    except ValueError as exc:
+        raise StartupFailure("PROXY", str(exc)) from None
+    except (OSError, subprocess.SubprocessError):
+        raise StartupFailure("PROXY") from None
     return dict(country=country, ip=address, latency_ms=elapsed, http_status=200,
                 endpoint=_GUARDED_ENDPOINT, route="已核验的 OneVPN 本机代理", error=None)
 
@@ -476,7 +479,7 @@ def _client_slot(client):
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise ValueError("已有同类受管客户端，请先关闭再启动") from None
+            raise StartupFailure("SLOT_BUSY") from None
         yield
     finally:
         os.close(fd)
@@ -496,7 +499,7 @@ def _command(client, arguments, port):
         from .chrome_web import web_command
         return web_command(port)
     if any(row[3] == _DESKTOP for row in _processes()):
-        raise ValueError("请先完全退出已打开的 Claude 桌面版，再从受管模式启动")
+        raise StartupFailure("CLIENT_OPEN")
     if not os.access(_DESKTOP, os.X_OK):
         raise ValueError("未找到可执行的 Claude 桌面版")
     return [_DESKTOP]
@@ -517,27 +520,23 @@ def _verify_desktop_proxy():
         raise ValueError("原生 Claude 需要受管的固定代理 127.0.0.1:47836，并关闭 PAC。")
 
 
-def _notify_dashboard():
-    target = os.environ.pop("PREFLIGHT_READY_FD", None)
-    if target and target.isdecimal() and int(target) > 2:
-        fd = int(target)
-        try:
-            if stat.S_ISFIFO(os.fstat(fd).st_mode):
-                os.write(fd, b"READY\n")
-        except OSError:
-            pass
-        finally:
-            with contextlib.suppress(OSError):
-                os.close(fd)
+@contextlib.contextmanager
+def _startup_check(code):
+    try:
+        yield
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        raise StartupFailure(code, str(exc)) from None
 
 
 def _supervise(arguments, client, expected, latch, attach_pid=None):
-    base = _identity()
+    with _startup_check("PROXY"):
+        base = _identity()
     existing = None
     if client == "desktop":
         from .native_firewall import assert_desktop_firewall
-        assert_desktop_firewall(DESKTOP_PORT)
-        _verify_desktop_proxy()
+        with _startup_check("DESKTOP_PROTECTION"):
+            assert_desktop_firewall(DESKTOP_PORT)
+            _verify_desktop_proxy()
         if attach_pid is not None:
             existing = _native_instance(attach_pid, os.environ.get("PREFLIGHT_DESKTOP_START"))
             if existing is None:
@@ -559,7 +558,8 @@ def _supervise(arguments, client, expected, latch, attach_pid=None):
         latch.attach(relay)
         if client == "web":
             from .chrome_web import verify_chrome_proxy
-            verify_chrome_proxy()
+            with _startup_check("WEB_PROTECTION"):
+                verify_chrome_proxy()
             prefix = []
             description = "专用 Chrome 窗口：普通网页请求使用已验证的固定代理。"
         elif client == "desktop":
@@ -571,8 +571,9 @@ def _supervise(arguments, client, expected, latch, attach_pid=None):
             prefix = [_SANDBOX, "-p", policy]
             description = "macOS 进程沙盒：直接网络连接仅允许本地受管中继。"
         check_port = base.port if client == "desktop" else relay.port
-        if _trace_ip(check_port) != expected or _identity() != base:
-            raise ValueError("受管通道的 IP 或 OneVPN 状态与启动前的检测不一致")
+        with _startup_check("PROXY"):
+            if _trace_ip(check_port) != expected or _identity() != base:
+                raise ValueError("受管通道的 IP 或 OneVPN 状态与启动前的检测不一致")
         command = None if existing else _command(client, arguments, relay.port)
         for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             previous[number] = signal.signal(number, handler)
@@ -583,7 +584,7 @@ def _supervise(arguments, client, expected, latch, attach_pid=None):
         print(description, file=sys.stderr, flush=True)
         if existing:
             _watch(latch, stop, base, expected, relay.port)
-            _notify_dashboard()
+            notify_dashboard()
             while not ending and _native_instance(existing[0], existing[2]):
                 stop.wait(1)
             return 0
@@ -593,7 +594,7 @@ def _supervise(arguments, client, expected, latch, attach_pid=None):
         announced = False
         while child.poll() is None:
             if not announced and time.monotonic() - started >= 1.5:
-                _notify_dashboard()
+                notify_dashboard()
                 announced = True
             if ending:
                 latch.lock("监护程序正在退出")
@@ -636,5 +637,7 @@ def run_guard(arguments, expected_ip, client="cli", attach_pid=None):
         with _client_slot(client), _control(latch):
             return _supervise(arguments, client, str(address), latch, attach_pid)
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        if isinstance(exc, StartupFailure):
+            notify_dashboard(exc.code)
         print(f"Preflight：受管启动失败（{exc}）。", file=sys.stderr)
         return 2

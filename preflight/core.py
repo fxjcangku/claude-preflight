@@ -19,12 +19,15 @@ def validate_target(country, timezone):
         raise ValueError("请输入有效的两位地区代码，例如 TW。")
     if not isinstance(timezone, str):
         raise ValueError("请输入 IANA 时区，例如 Asia/Taipei。")
+    code = country.strip().upper()
     zone = timezone.strip()
     try:
         ZoneInfo(zone)
     except (ValueError, OSError, ZoneInfoNotFoundError):
         raise ValueError("找不到这个 IANA 时区，例如可以填写 Asia/Taipei。") from None
-    return {"country": country.strip().upper(), "timezone": zone}
+    if code != DEFAULT_TARGET["country"] or zone != DEFAULT_TARGET["timezone"]:
+        raise ValueError("本版本仅支持台湾出口（TW / Asia/Taipei），其他国家或地区暂不支持。")
+    return {"country": code, "timezone": zone}
 
 
 def preferences_path():

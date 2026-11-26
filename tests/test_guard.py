@@ -281,6 +281,15 @@ class GuardTests(unittest.TestCase):
         finally:
             release.set()
 
+    def test_busy_slot_reports_safe_reason_before_starting_client(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(guard, "_registry", return_value=Path(tmp)), \
+             patch.object(guard.sys, "platform", "darwin"), patch.object(guard.fcntl, "flock", side_effect=BlockingIOError()), \
+             patch.object(guard.stat, "S_ISSOCK", return_value=False), patch.object(guard, "_supervise") as launch, \
+             patch.object(guard, "notify_dashboard") as notify, contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(guard.run_guard([], "1.1.1.1", client="desktop"), 2)
+            notify.assert_called_once_with("SLOT_BUSY")
+            launch.assert_not_called()
+
     def test_desktop_and_web_refuse_handoff_or_option_overrides(self):
         with patch.object(guard, "_processes", return_value=[(122, 500, "start", guard._DESKTOP)]):
             with self.assertRaisesRegex(ValueError, "完全退出"):

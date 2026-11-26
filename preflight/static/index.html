@@ -4,9 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#101418">
-  <title>Preflight · 网络环境总览</title>
+  <meta name="theme-color" content="#0d1318">
+  <title>Preflight · Mac 网络环境与 Claude 保护</title>
   <link rel="stylesheet" href="styles.css">
+  <script src="native-setup.js" defer></script>
   <script src="globe.js" defer></script>
   <script src="app.js" defer></script>
 </head>
@@ -27,8 +28,12 @@
     <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 4v16h16M7 15l4-5 3 2 5-6"/></symbol>
     <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12Z"/><circle cx="12" cy="12" r="2.5"/></symbol>
     <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="m3 3 18 18M10.6 5.6c.5-.1.9-.1 1.4-.1 6.5 0 10 6.5 10 6.5a19 19 0 0 1-3.1 3.9M6 6.9A20 20 0 0 0 2 12s3.5 6.5 10 6.5c1.9 0 3.5-.5 5-1.4"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="12" rx="2"/><path d="M15.5 8.5V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7.5a2 2 0 0 0 2 2h2.5"/></symbol>
     <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-9v.2"/></symbol>
+    <symbol id="i-world" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><ellipse cx="12" cy="12" rx="3.7" ry="8.5"/><path d="M3.5 12h17"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3.5c2 1.5 4.8 2.4 7.5 2.8v5.5c0 4.2-2.4 6.8-7.5 9.1-5.1-2.3-7.5-4.9-7.5-9.1V6.3c2.7-.4 5.5-1.3 7.5-2.8Z"/><path d="m8.7 12 2.2 2.2 4.7-4.7"/></symbol>
     <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M12 3v4m0 10v4M5 12h14"/><circle cx="12" cy="12" r="3"/></symbol>
   </defs>
 </svg>
 
@@ -36,51 +41,197 @@
   <aside class="sidebar" aria-label="主侧栏">
     <a href="#overview" class="brand" aria-label="Preflight 总览">
       <span class="brand-mark"><svg aria-hidden="true"><use href="#i-mark"/></svg></span>
-      <span>Preflight</span>
+      <span class="brand-copy"><strong>Preflight</strong><small>v0.2.0 · 🇹🇼</small></span>
     </a>
     <nav class="primary-nav" aria-label="主导航">
-      <a class="nav-link is-active" href="#overview" aria-current="location"><svg class="icon" aria-hidden="true"><use href="#i-grid"/></svg><span>总览</span></a>
-      <a class="nav-link" href="#history"><svg class="icon" aria-hidden="true"><use href="#i-history"/></svg><span>检测记录</span></a>
-      <a id="settings-button" class="nav-link" href="#settings"><svg class="icon" aria-hidden="true"><use href="#i-tune"/></svg><span>检测设置</span></a>
-      <a class="nav-link about-link" href="/about/"><svg class="icon" aria-hidden="true"><use href="#i-info"/></svg><span>使用说明</span></a>
+      <a class="nav-link is-active" href="#overview" title="总览" aria-current="location"><svg class="icon" aria-hidden="true"><use href="#i-grid"/></svg><span>总览</span></a>
+      <a class="nav-link" href="#network-checks" title="网络检测"><svg class="icon" aria-hidden="true"><use href="#i-pulse"/></svg><span>网络检测</span></a>
+      <a class="nav-link" href="#clients" title="客户端保护"><svg class="icon" aria-hidden="true"><use href="#i-shield"/></svg><span>客户端保护</span></a>
+      <a class="nav-link setup-link" href="#mac-setup" title="配置与恢复"><svg class="icon" aria-hidden="true"><use href="#i-sliders"/></svg><span>配置与恢复</span></a>
+      <a class="nav-link" href="#history" title="检测记录"><svg class="icon" aria-hidden="true"><use href="#i-history"/></svg><span>检测记录</span></a>
+      <a id="settings-button" class="nav-link" href="#settings" title="设置"><svg class="icon" aria-hidden="true"><use href="#i-tune"/></svg><span>设置</span></a>
+      <a class="nav-link about-link" href="/about/" title="使用说明"><svg class="icon" aria-hidden="true"><use href="#i-info"/></svg><span>使用说明</span></a>
     </nav>
-    <div class="local-state"><span class="local-icon"><svg class="icon" aria-hidden="true"><use href="#i-monitor"/></svg></span><div><strong>本机服务</strong><span id="service-state" role="status">等待连接</span></div></div>
+    <div class="local-state">
+      <span class="local-icon"><svg class="icon" aria-hidden="true"><use href="#i-monitor"/></svg></span>
+      <div><strong>本机服务</strong><span id="service-state" role="status">等待连接</span></div>
+    </div>
   </aside>
+
   <main class="content" id="overview" tabindex="-1">
-    <div class="page-intro">
-      <div class="headline"><h1>网络环境总览</h1><p class="updated">上次检测 <time id="last-updated">—</time></p></div>
+    <header class="page-intro">
+      <div class="headline">
+        <div class="headline-row">
+          <h1>网络环境总览</h1>
+          <span id="alignment-badge" class="status-pill" data-tone="neutral">待质检</span>
+        </div>
+        <p class="updated">上次检测 <time id="last-updated">—</time> · 目标 🇹🇼 台湾（TW / Asia/Taipei）</p>
+      </div>
       <div class="intro-actions">
         <label class="switch-control" for="auto-refresh"><input type="checkbox" id="auto-refresh" role="switch"><span class="switch-track" aria-hidden="true"></span><span>自动刷新</span></label>
         <button id="refresh-button" class="button primary-button" type="button"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg><span>立即检测</span></button>
       </div>
-    </div>
+    </header>
 
     <p id="app-notice" class="app-notice" role="alert" hidden></p>
+
+    <!-- Hero Row: Network Exit + IP + VPN & Timezone -->
     <div class="metrics-grid">
-      <section class="exit-card panel" aria-labelledby="exit-heading">
+      <section class="exit-card panel glass-hero" aria-labelledby="exit-heading">
         <div class="hero-copy">
-          <h2 id="exit-heading" class="card-title"><svg class="icon" aria-hidden="true"><use href="#i-route"/></svg>网络出口</h2>
-          <div class="exit-reading"><div id="exit-country" class="country-value">—</div><span id="hero-status" class="status-pill" data-tone="neutral">待检测</span></div>
-          <div class="ip-block"><span class="field-caption">公网 IP</span><div class="ip-line"><span id="exit-ip">—</span><button id="ip-toggle" type="button" class="icon-button" aria-label="显示完整 IP" aria-pressed="false" title="显示或隐藏完整 IP"><svg class="icon eye-open" aria-hidden="true"><use href="#i-eye"/></svg><svg class="icon eye-closed" aria-hidden="true"><use href="#i-eye-off"/></svg></button></div></div>
+          <div class="card-head-row">
+            <h2 id="exit-heading" class="card-title"><span class="emoji-badge" aria-hidden="true">🌐</span>网络出口与公网 IP</h2>
+            <span id="hero-status" class="status-pill" data-tone="neutral">待检测</span>
+          </div>
+          <div class="exit-reading">
+            <span id="exit-flag" aria-hidden="true">🌐</span>
+            <div class="country-cluster">
+              <div id="exit-country" class="country-value">—</div>
+              <span id="exit-code" class="code-chip" hidden>—</span>
+            </div>
+          </div>
+          <div class="ip-block">
+            <span class="field-caption">公网出口 IP</span>
+            <div class="ip-line">
+              <span id="exit-ip">—</span>
+              <button id="ip-toggle" type="button" class="icon-button" aria-label="显示完整 IP" aria-pressed="false" title="显示或隐藏完整 IP"><svg class="icon eye-open" aria-hidden="true"><use href="#i-eye"/></svg><svg class="icon eye-closed" aria-hidden="true"><use href="#i-eye-off"/></svg></button>
+              <button id="ip-copy" type="button" class="icon-button" aria-label="复制 IP" title="复制公网 IP" disabled><svg class="icon" aria-hidden="true"><use href="#i-copy"/></svg></button>
+              <span id="ip-copy-hint" class="copy-hint" role="status" aria-live="polite"></span>
+            </div>
+          </div>
           <p id="exit-detail" class="exit-detail"></p>
         </div>
         <div class="globe-wrap"><canvas id="route-globe" width="280" height="230" role="img" aria-label="网络出口的参考位置"></canvas></div>
       </section>
+
       <div class="side-metrics">
-        <section class="small-metric panel latency-panel" aria-labelledby="latency-heading">
-          <h2 id="latency-heading" class="card-title"><svg class="icon" aria-hidden="true"><use href="#i-pulse"/></svg>请求延迟</h2>
-          <div class="latency-line"><div class="metric-reading"><strong id="latency-value">—</strong><span>ms</span></div><small id="latency-detail"></small></div>
+        <section class="small-metric panel vpn-card" aria-labelledby="vpn-heading">
+          <div class="card-head-row">
+            <h2 id="vpn-heading" class="card-title"><span class="emoji-badge" aria-hidden="true">✈️</span>梯子 / VPN 状态</h2>
+            <span id="vpn-status-pill" class="status-pill" data-tone="neutral">检测中</span>
+          </div>
+          <div class="vpn-main-line">
+            <strong id="vpn-app-name">正在扫描 VPN…</strong>
+            <span id="vpn-proxy-chip" class="mono-chip">—</span>
+          </div>
+          <p id="vpn-summary" class="metric-sub">自动识别本机已安装的 VPN 客户端、代理端口与节点状态</p>
         </section>
-        <section class="small-metric panel time-panel" aria-labelledby="time-heading">
-          <h2 id="time-heading" class="card-title"><svg class="icon" aria-hidden="true"><use href="#i-time"/></svg>本地时区</h2>
-          <dl class="zone-grid"><div><dt>系统</dt><dd id="system-timezone">—</dd></div><div><dt>浏览器</dt><dd id="browser-timezone">—</dd></div><div><dt>自动时区</dt><dd id="auto-timezone">—</dd></div></dl>
+
+        <section class="small-metric panel latency-time-card" aria-labelledby="time-heading">
+          <div class="dual-mini-head">
+            <h2 id="time-heading" class="card-title"><span class="emoji-badge" aria-hidden="true">⏱️</span>延迟与三方时区</h2>
+            <div class="latency-inline"><strong id="latency-value">—</strong><span>ms</span><small id="latency-detail"></small></div>
+          </div>
+          <dl class="zone-grid">
+            <div><dt>系统时区</dt><dd id="system-timezone">—</dd></div>
+            <div><dt>浏览器时区</dt><dd id="browser-timezone">—</dd></div>
+            <div><dt>自动更新时区</dt><dd id="auto-timezone">—</dd></div>
+          </dl>
         </section>
       </div>
     </div>
 
-    <div class="analysis-grid">
+    <!-- Prerequisite Self-Check Bento Grid -->
+    <section id="self-check" class="panel readiness-panel" aria-labelledby="readiness-heading">
+      <div class="panel-heading">
+        <h2 id="readiness-heading" class="section-title"><span class="emoji-badge" aria-hidden="true">🧭</span>前置条件自检与三方一致质检</h2>
+        <div class="readiness-meta">
+          <span id="readiness-overall" class="status-pill" data-tone="neutral">自检中</span>
+          <button id="readiness-refresh" type="button" class="mini-ghost-btn" title="重新自检所有前置条件">刷新自检</button>
+        </div>
+      </div>
+
+      <div class="triple-bar" id="triple-alignment" data-tone="neutral">
+        <div class="triple-item">
+          <span class="triple-label">🌐 实测 VPN 出口</span>
+          <strong id="tri-exit">待检测</strong>
+        </div>
+        <span class="triple-arrow" aria-hidden="true">↔</span>
+        <div class="triple-item">
+          <span class="triple-label">🖥️ macOS 地区</span>
+          <strong id="tri-region">待检测</strong>
+        </div>
+        <span class="triple-arrow" aria-hidden="true">↔</span>
+        <div class="triple-item">
+          <span class="triple-label">🕒 系统 / 终端 / 浏览器时区</span>
+          <strong id="tri-timezone">待检测</strong>
+        </div>
+        <span id="tri-verdict" class="triple-verdict">等待实测核验</span>
+      </div>
+
+      <div class="readiness-grid">
+        <article class="readiness-card" id="rc-vpn" data-tone="neutral">
+          <div class="rc-head"><span class="rc-title">✈️ VPN 与分流</span><span class="rc-badge" id="rc-vpn-badge">未知</span></div>
+          <ul class="rc-list" id="rc-vpn-list"><li>正在检测本机 VPN 客户端…</li></ul>
+        </article>
+        <article class="readiness-card" id="rc-claude" data-tone="neutral">
+          <div class="rc-head"><span class="rc-title">🤖 Claude 状态</span><span class="rc-badge" id="rc-claude-badge">未知</span></div>
+          <ul class="rc-list" id="rc-claude-list"><li>正在检测安装、登录与代理配置…</li></ul>
+        </article>
+        <article class="readiness-card" id="rc-lulu" data-tone="neutral">
+          <div class="rc-head"><span class="rc-title">🛡️ LuLu 防火墙</span><span class="rc-badge" id="rc-lulu-badge">未知</span></div>
+          <ul class="rc-list" id="rc-lulu-list"><li>正在检测扩展、过滤器与规则…</li></ul>
+        </article>
+        <article class="readiness-card" id="rc-region" data-tone="neutral">
+          <div class="rc-head"><span class="rc-title">🇹🇼 地区与时区</span><span class="rc-badge" id="rc-region-badge">未知</span></div>
+          <ul class="rc-list" id="rc-region-list"><li>正在读取 macOS 地区与时区…</li></ul>
+        </article>
+      </div>
+    </section>
+
+    <!-- One-Click Setup & Restore Section -->
+    <section id="mac-setup" class="panel setup-panel" aria-labelledby="setup-heading">
+      <div class="setup-overview">
+        <div class="setup-heading">
+          <span class="setup-flag" aria-hidden="true">🇹🇼</span>
+          <div>
+            <h2 id="setup-heading" class="section-title">配置与恢复 · 一键配置 Claude 台湾环境</h2>
+            <p>自动备份现状 → 台湾地区与台北时区（关自动时区）→ VPN 台湾节点分流 → 安全合并 LuLu 规则与固定代理 → 实测验收</p>
+          </div>
+        </div>
+        <div class="setup-controls">
+          <button id="configure-all" type="button" class="button primary-button" disabled>🚀 一键配置</button>
+          <button id="restore-configuration" type="button" class="button quiet-button" disabled title="按首次备份撤销本 App 所做的改动" aria-describedby="restore-help">↩️ 一键复原</button>
+        </div>
+      </div>
+
+      <div class="setup-notes">
+        <p class="vpn-note"><svg class="icon" aria-hidden="true"><use href="#i-info"/></svg>搭配官方 LuLu 4.5.7 使用（备份并安全合并，不丢失其他软件规则）。VPN 与台湾节点需自备，本版仅支持台湾出口（TW）。</p>
+        <p id="restore-help" class="setup-note">复原仅撤销本 App 管理的变更，检测用户后续改动冲突。</p>
+      </div>
+
+      <!-- Step-by-step live pipeline -->
+      <ol id="setup-pipeline" class="setup-pipeline" hidden></ol>
+
+      <details class="setup-details">
+        <summary>单项配置<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
+        <div class="setup-actions">
+          <button id="configure-taiwan" class="setup-action" type="button" disabled>
+            <span class="setup-icon">🇹🇼</span>
+            <span class="setup-text"><strong>台湾地区与台北时区</strong><small>设为 TW 与 Asia/Taipei，关闭自动更新时区，保留简体中文与字体。</small></span>
+            <svg class="icon action-chevron" aria-hidden="true"><use href="#i-chevron"/></svg>
+          </button>
+          <button id="configure-vpn" class="setup-action" type="button" disabled>
+            <span class="setup-icon">✈️</span>
+            <span class="setup-text"><strong>VPN 台湾节点与分流</strong><small>OneVPN 1.5.1 自动配置节点与 Claude 规则并实测 TW；其他 VPN 自动核验出口。</small></span>
+            <svg class="icon action-chevron" aria-hidden="true"><use href="#i-chevron"/></svg>
+          </button>
+          <button id="configure-firewall" class="setup-action" type="button" disabled>
+            <span class="setup-icon firewall-icon">🛡️</span>
+            <span class="setup-text"><strong>LuLu 规则、代理与监护</strong><small>安全合并导入 Claude 专用规则、安装固定代理描述文件并启用 Dock 监护。</small></span>
+            <svg class="icon action-chevron" aria-hidden="true"><use href="#i-chevron"/></svg>
+          </button>
+        </div>
+      </details>
+
+      <p id="setup-availability" class="setup-note">🔒 系统配置桥仅在 Preflight Mac App 中可用，普通浏览器页面无法调用。</p>
+      <p id="setup-feedback" role="status" aria-live="polite"></p>
+    </section>
+
+    <!-- Network Checks & Trend Section -->
+    <div class="analysis-grid" id="network-checks">
       <section class="panel result-panel" aria-labelledby="checks-heading">
-        <div class="panel-heading"><h2 id="checks-heading" class="section-title"><svg class="icon" aria-hidden="true"><use href="#i-list"/></svg>环境检查</h2><span id="checks-summary" class="panel-meta" aria-live="polite"></span></div>
+        <div class="panel-heading"><h2 id="checks-heading" class="section-title"><svg class="icon" aria-hidden="true"><use href="#i-list"/></svg>网络检测与三方核对</h2><span id="checks-summary" class="panel-meta" aria-live="polite"></span></div>
         <div id="checks-list" class="checks-list"><p class="empty-copy">运行检测后，这里会显示各项检查结果。</p></div>
       </section>
       <section class="panel trend-panel" aria-labelledby="trend-heading">
@@ -92,29 +243,58 @@
 
     <section class="panel context-panel" aria-labelledby="context-heading">
       <div class="panel-heading"><h2 id="context-heading" class="section-title"><svg class="icon" aria-hidden="true"><use href="#i-monitor"/></svg>探测环境</h2></div>
-      <dl class="context-grid"><div><dt>探测路径</dt><dd id="route-detail">—</dd></div><div><dt>系统代理</dt><dd id="proxy-detail">—</dd></div><div><dt>首选语言</dt><dd id="language-detail">—</dd></div><div><dt>Claude Code CLI</dt><dd id="cli-detail">—</dd></div></dl>
+      <dl class="context-grid">
+        <div><dt>探测路径</dt><dd id="route-detail">—</dd></div>
+        <div><dt>系统代理</dt><dd id="proxy-detail">—</dd></div>
+        <div><dt>首选语言</dt><dd id="language-detail">—</dd></div>
+        <div><dt>Claude Code CLI</dt><dd id="cli-detail">—</dd></div>
+      </dl>
     </section>
-    <section class="panel guard-panel" aria-labelledby="guard-heading">
-      <div><h2 id="guard-heading" class="section-title"><svg class="icon" aria-hidden="true"><use href="#i-route"/></svg>OneVPN 切换保护</h2>
-        <p>换节点前，先锁定通过 Preflight 启动的会话。收到确认后再切换。</p>
-        <p id="guard-feedback" role="status" hidden></p></div>
+
+    <!-- Client Protection Section -->
+    <section id="clients" class="panel guard-panel" aria-labelledby="guard-heading">
+      <div class="guard-copy">
+        <h2 id="guard-heading" class="section-title"><svg class="icon" aria-hidden="true"><use href="#i-shield"/></svg>客户端保护 · 断线锁定与受管启动</h2>
+        <p>覆盖原生 Claude 桌面版、受管 Claude Code 终端和专用网页窗口。切换节点前请先点击「锁定受管连接」。</p>
+        <p class="guard-caveat">⚠️ 出口监测为定时轮询，存在短暂检测间隔（非零延迟）。单次超时将先暂停全部转发，确认原出口后才恢复；手动锁定或节点/出口改变后旧会话保持锁定，且旧客户端仍占用启动位置，<strong>必须完全退出旧客户端后再重新启动</strong>。</p>
+        <p id="guard-feedback" role="status" hidden></p>
+      </div>
       <div class="guard-actions">
-        <button id="launch-web" type="button" class="button primary-button" disabled>打开专用网页</button>
-        <button id="launch-desktop" type="button" class="button secondary-button" disabled>受管桌面版</button>
-        <button id="guard-lock" type="button" class="button secondary-button">锁定受管连接</button>
+        <button id="launch-web" type="button" class="button primary-button" disabled>🌐 打开专用网页</button>
+        <button id="launch-desktop" type="button" class="button secondary-button" disabled>🤖 受管桌面版</button>
+        <button id="guard-lock" type="button" class="button quiet-button">🔒 锁定受管连接</button>
       </div>
       <p id="launch-feedback" role="status" hidden></p>
     </section>
+
+    <!-- History Section -->
     <section id="history" class="panel history-panel" aria-labelledby="history-heading">
       <div class="panel-heading"><h2 id="history-heading" class="section-title"><svg class="icon" aria-hidden="true"><use href="#i-history"/></svg>检测记录</h2><span id="history-summary" class="panel-meta"></span></div>
-      <div class="history-table"><div class="history-table-head" aria-hidden="true"><span>检测时间</span><span>出口地区</span><span>延迟</span><span>本机检查</span></div><div id="history-list" aria-label="检测记录"><p class="empty-copy">暂无检测记录</p></div></div>
+      <div class="history-table">
+        <div class="history-table-head" aria-hidden="true"><span>检测时间</span><span>出口地区</span><span>延迟</span><span>本机质检</span></div>
+        <div id="history-list" aria-label="检测记录"><p class="empty-copy">暂无检测记录</p></div>
+      </div>
     </section>
+
+    <!-- Settings Section (Taiwan-Only Constraint for v0.2.0) -->
     <section id="settings" class="panel settings-panel" aria-labelledby="settings-heading">
-      <div class="panel-heading"><h2 id="settings-heading" class="section-title"><svg class="icon" aria-hidden="true"><use href="#i-tune"/></svg>检测设置</h2></div>
+      <div class="panel-heading">
+        <h2 id="settings-heading" class="section-title"><svg class="icon" aria-hidden="true"><use href="#i-tune"/></svg>设置</h2>
+        <span class="status-pill" data-tone="good">🇹🇼 v0.2.0 仅支持台湾</span>
+      </div>
+      <p class="settings-constraint">当前版本仅支持台湾出口配置与质检（目标地区固定为 <code>TW</code>、目标时区固定为 <code>Asia/Taipei</code>），暂不支持其他国家或地区；若实际出口为其他国家/地区，面板仍会如实显示对应国家旗帜与代码并标记不符。</p>
       <form id="settings-form" class="settings-form">
-        <div class="form-field"><label for="target-input">目标地区</label><input id="target-input" name="country" maxlength="2" pattern="[A-Za-z]{2}" placeholder="TW" autocomplete="off" autocapitalize="characters" spellcheck="false" required aria-describedby="country-help"><small id="country-help">两位地区代码，例如 TW。</small></div>
-        <div class="form-field"><label for="timezone-input">目标时区</label><input id="timezone-input" name="timezone" placeholder="Asia/Taipei" autocomplete="off" autocapitalize="off" spellcheck="false" required aria-describedby="timezone-help"><small id="timezone-help">IANA 时区名称，例如 Asia/Taipei。</small></div>
-        <button class="button secondary-button" type="submit">保存设置</button>
+        <div class="form-field">
+          <label for="target-input">目标地区（本版锁定）</label>
+          <input id="target-input" name="country" value="TW" readonly aria-readonly="true" aria-describedby="country-help">
+          <small id="country-help">🇹🇼 台湾（TW）· 本版仅支持台湾出口。</small>
+        </div>
+        <div class="form-field">
+          <label for="timezone-input">目标时区（本版锁定）</label>
+          <input id="timezone-input" name="timezone" value="Asia/Taipei" readonly aria-readonly="true" aria-describedby="timezone-help">
+          <small id="timezone-help">Asia/Taipei · 需与实测出口和 macOS 地区三方一致。</small>
+        </div>
+        <button class="button secondary-button" type="submit">核验目标设置</button>
       </form>
       <p id="settings-status" class="settings-status" role="status"></p>
     </section>

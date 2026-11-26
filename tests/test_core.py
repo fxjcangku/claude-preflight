@@ -30,8 +30,10 @@ class PreflightTests(unittest.TestCase):
         with patch("preflight.__main__.snapshot", return_value=sample), \
              patch("preflight.__main__.load_target", return_value=core.DEFAULT_TARGET), \
              patch("sys.argv", ["preflight", "run"]), patch("builtins.print"), \
+             patch("preflight.__main__.notify_dashboard") as notify, \
              patch("preflight.guard.run_guard") as launch:
             self.assertEqual(main(), 2)
+            notify.assert_called_once_with("ENVIRONMENT")
             launch.assert_not_called()
 
     def test_managed_commands_never_probe_on_a_missing_vpn(self):
@@ -41,9 +43,11 @@ class PreflightTests(unittest.TestCase):
                  patch("preflight.__main__.load_target", return_value=core.DEFAULT_TARGET), \
                  patch.object(core, "probe_network") as standard, \
                  patch("preflight.guard._identity", side_effect=ValueError("offline")), \
+                 patch("preflight.__main__.notify_dashboard") as notify, \
                  patch("preflight.guard._trace_via_port") as request, \
                  patch("preflight.guard.run_guard") as launch:
                 self.assertEqual(main(), 2)
+                notify.assert_called_once_with("PROXY")
                 standard.assert_not_called()
                 request.assert_not_called()
                 launch.assert_not_called()
@@ -81,12 +85,19 @@ class PreflightTests(unittest.TestCase):
             location = Path(home) / "app" / "target.json"
             with patch.object(core, "preferences_path", return_value=location):
                 self.assertEqual(core.load_target(), core.DEFAULT_TARGET)
-                target = core.validate_target("jp", "Asia/Tokyo")
+                target = core.validate_target("tw", "Asia/Taipei")
                 core.save_target(target)
                 self.assertEqual(core.load_target(), target)
                 self.assertEqual(json.loads(location.read_text()), target)
 
-    def test_invalid_target(self):
-        for country, zone in [("QQ", "UTC"), ("TW", "../zone"), ("TW", "Area/Missing")]:
+    def test_invalid_or_non_taiwan_target_is_rejected(self):
+        for country, zone in [
+            ("QQ", "UTC"),
+            ("TW", "../zone"),
+            ("TW", "Area/Missing"),
+            ("JP", "Asia/Tokyo"),
+            ("US", "America/New_York"),
+            ("TW", "Asia/Shanghai"),
+        ]:
             with self.subTest(country=country, zone=zone), self.assertRaises(ValueError):
                 core.validate_target(country, zone)

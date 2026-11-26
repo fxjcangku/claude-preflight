@@ -20,6 +20,7 @@ _DOCS = _STATIC.parent.parent / "docs"
 _FILES = {
     "/": (_STATIC / "index.html", "text/html; charset=utf-8"),
     "/app.js": (_STATIC / "app.js", "application/javascript; charset=utf-8"),
+    "/native-setup.js": (_STATIC / "native-setup.js", "application/javascript; charset=utf-8"),
     "/globe.js": (_STATIC / "globe.js", "application/javascript; charset=utf-8"),
     "/styles.css": (_STATIC / "styles.css", "text/css; charset=utf-8"),
     "/world.json": (_STATIC / "world.json", "application/json; charset=utf-8"),
@@ -167,6 +168,9 @@ class _Handler(BaseHTTPRequestHandler):
         if self.command == "GET":
             if path == "/api/state":
                 self._json(200, state.read())
+            elif path == "/api/readiness":
+                from .status_check import collect_readiness
+                self._json(200, collect_readiness())
             elif path in _FILES:
                 source, mime = _FILES[path]
                 try:

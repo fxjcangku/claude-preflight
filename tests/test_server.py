@@ -84,18 +84,29 @@ class LocalServerTests(unittest.TestCase):
         self.assertEqual(self.post("/api/check", {"url": "example.invalid"})[0], 400)
         self.assertEqual(self.post("/api/settings", {"country": "US"})[0], 400)
 
-    def test_settings_save_and_reassess_current_reading(self):
+    def test_settings_enforces_taiwan_only_and_reassesses_reading(self):
         with patch.object(server, "snapshot", return_value=READING):
             code, data = self.post("/api/check", {})
         self.assertEqual(code, 200)
         self.assertEqual(json.loads(data)["assessment"]["status"], "pass")
         with patch.object(server, "save_target") as save:
-            code, data = self.post("/api/settings", {"country": "us", "timezone": "America/New_York"})
+            code, err = self.post("/api/settings", {"country": "us", "timezone": "America/New_York"})
+            self.assertEqual(code, 400)
+            self.assertIn("仅支持台湾", json.loads(err)["error"])
+            save.assert_not_called()
+            code, data = self.post("/api/settings", {"country": "tw", "timezone": "Asia/Taipei"})
         self.assertEqual(code, 200)
         state = json.loads(data)
-        save.assert_called_once_with({"country": "US", "timezone": "America/New_York"})
-        self.assertEqual(state["assessment"]["status"], "fail")
+        save.assert_called_once_with({"country": "TW", "timezone": "Asia/Taipei"})
+        self.assertEqual(state["assessment"]["status"], "pass")
         self.assertEqual(state["history"], [READING])
+
+    def test_readiness_endpoint_returns_self_check_snapshot(self):
+        fake = {"overall": "ok", "target": TARGET, "vpn": {"state": "ok"}}
+        with patch("preflight.status_check.collect_readiness", return_value=fake):
+            status, body = self.request("GET", "/api/readiness")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), fake)
 
     def test_pending_sample_shared_and_limit(self):
         sampling = threading.Event()

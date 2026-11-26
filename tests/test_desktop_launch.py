@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import tempfile
 import time
@@ -62,6 +63,39 @@ class LocalLaunchTests(unittest.TestCase):
         self.script.write_text("pass\n")
         self.launches.launch("desktop")
         self.await_state("desktop", "failed")
+
+    def test_only_complete_allowlisted_errors_reach_dashboard(self):
+        for frame, expected in [
+            (b"ERROR SLOT_BUSY\n", desktop_launch._ERRORS["SLOT_BUSY"]),
+            (b"ERROR PROXY\n", desktop_launch._ERRORS["PROXY"]),
+            (b"ERROR SLOT_BUSY private details\n", desktop_launch._START_ERROR),
+            (b"ERROR UNKNOWN\n", desktop_launch._START_ERROR),
+            (b"ERROR SLOT_BUSY", desktop_launch._START_ERROR),
+        ]:
+            with self.subTest(frame=frame):
+                self.script.write_text(
+                    "import os\n"
+                    "fd=int(os.environ['PREFLIGHT_READY_FD'])\n"
+                    "os.write(fd,b'ER')\n"
+                    f"os.write(fd,{frame[2:]!r})\n"
+                )
+                self.launches.launch("web")
+                self.assertEqual(self.await_state("web", "failed")["error"], expected)
+
+    def test_child_sends_only_allowlisted_outcome_and_closes_pipe(self):
+        for code, frame in [(None, b"READY\n"), ("SLOT_BUSY", b"ERROR SLOT_BUSY\n"),
+                            ("private details", b"")]:
+            with self.subTest(code=code):
+                read_fd, write_fd = os.pipe()
+                try:
+                    with patch.dict(os.environ, PREFLIGHT_READY_FD=str(write_fd)):
+                        desktop_launch.notify_dashboard(code)
+                        desktop_launch.notify_dashboard("PROXY")
+                        self.assertNotIn("PREFLIGHT_READY_FD", os.environ)
+                    self.assertEqual(os.read(read_fd, 128), frame)
+                    self.assertEqual(os.read(read_fd, 1), b"")
+                finally:
+                    os.close(read_fd)
 
     def test_handshake_deadline_cancels_only_the_unready_launcher(self):
         self.script.write_text("import time\ntime.sleep(20)\n")

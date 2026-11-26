@@ -24,7 +24,7 @@ _SOURCE = Path(__file__).resolve().parent.parent
 _BUNDLED = getattr(__loader__, "archive", None)
 _ENTRY = Path(_BUNDLED).resolve() if _BUNDLED else _SOURCE / "claude-preflight"
 _MODULES = ("__init__", "__main__", "core", "system_info", "network", "guard",
-            "relay", "native_firewall", "dock")
+            "relay", "native_firewall", "desktop_launch", "dock")
 _START_ENV = "PREFLIGHT_DESKTOP_START"
 
 

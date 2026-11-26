@@ -4,6 +4,7 @@ import json
 import sys
 
 from .core import evaluate, load_target, snapshot, validate_target
+from .desktop_launch import StartupFailure, notify_dashboard
 
 
 def main():
@@ -16,6 +17,21 @@ def main():
     commands.add_parser("watch-desktop", help="为从 Dock 打开的 Claude 等待并执行保护")
     commands.add_parser("install-watcher", help="为当前用户启用 Dock 启动监护")
     commands.add_parser("uninstall-watcher", help="移除当前用户的 Dock 启动监护")
+    config = commands.add_parser("configure", help="管理可复原的 macOS 地区和时区设置")
+    config.add_argument("--action", choices=("status", "taiwan", "restore"), default="status")
+    config.add_argument("--verify", action="store_true", help="核验管理员操作后的实际设置")
+    config.add_argument("--json", action="store_true")
+    firewall = commands.add_parser("configure-firewall", help="管理可复原的桌面网络保护设置")
+    firewall.add_argument("--action", choices=("status", "apply", "restore"), default="status")
+    firewall.add_argument("--verify", action="store_true", help="核验官方 LuLu 导入后的规则状态")
+    firewall.add_argument("--json", action="store_true")
+    vpn = commands.add_parser("configure-vpn", help="为现有 OneVPN 设置或复原分流规则")
+    vpn.add_argument("--action", choices=("status", "apply", "restore"), default="status")
+    vpn.add_argument("--phase", choices=("prepare", "commit", "verify"), default="prepare")
+    vpn.add_argument("--node", help="由本机配置助手返回的节点标识")
+    vpn.add_argument("--json", action="store_true")
+    readiness = commands.add_parser("readiness", help="输出前置条件自检状态")
+    readiness.add_argument("--json", action="store_true")
     attach = commands.add_parser("attach-desktop", help="为指定的已打开 Claude 桌面进程执行受管检查")
     attach.add_argument("pid", type=int)
     for mode, title in (("check", "执行检测"), ("run", "所有必检项通过后启动 Claude Code")):
@@ -30,6 +46,26 @@ def main():
             sub.add_argument("args", nargs=argparse.REMAINDER, help="在 -- 后添加 Claude 参数")
     args = parser.parse_args()
     try:
+        if args.command == "configure":
+            from .configuration import configure
+            result = configure(args.action, verify=args.verify)
+            print(json.dumps(result, ensure_ascii=False) if args.json else result["message"])
+            return 2 if result["actionRequired"] == "error" else 0
+        if args.command == "configure-firewall":
+            from .firewall_setup import configure_firewall
+            result = configure_firewall(args.action, verify=args.verify)
+            print(json.dumps(result, ensure_ascii=False) if args.json else result["message"])
+            return 2 if result["status"] == "error" else 0
+        if args.command == "configure-vpn":
+            from .vpn_setup import configure_vpn
+            result = configure_vpn(args.action, args.phase, args.node)
+            print(json.dumps(result, ensure_ascii=False) if args.json else result["message"])
+            return 2 if result["status"] == "error" else 0
+        if args.command == "readiness":
+            from .status_check import collect_readiness
+            result = collect_readiness()
+            print(json.dumps(result, ensure_ascii=False, indent=2) if args.json else result["overall"])
+            return 0
         if args.command in ("watch-desktop", "install-watcher", "uninstall-watcher"):
             from .dock import install_dock_watcher, uninstall_dock_watcher, watch_dock
             action = {"watch-desktop": watch_dock, "install-watcher": install_dock_watcher,
@@ -69,6 +105,8 @@ def main():
             if net["error"]:
                 print("  网络诊断: " + net["error"])
         if assessment["status"] != "pass":
+            if args.command in ("run", "attach-desktop"):
+                notify_dashboard("ENVIRONMENT")
             return 1 if assessment["status"] == "fail" else 2
         if args.command == "attach-desktop":
             from .guard import run_guard
@@ -80,6 +118,8 @@ def main():
             return run_guard(forwarded, sample["network"]["ip"], client=args.client)
         return 0
     except (OSError, ValueError) as exc:
+        if isinstance(exc, StartupFailure):
+            notify_dashboard(exc.code)
         print(f"Preflight: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
