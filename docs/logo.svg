@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="Preflight">
+  <defs>
+    <linearGradient id="surface" x1="12" y1="1" x2="52" y2="63" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#bcf5d6"/>
+      <stop offset="1" stop-color="#75dbb6"/>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="62" height="62" rx="15" fill="url(#surface)" stroke="#6bc8a8" stroke-width="2"/>
+  <path d="M11 48 29 12h11L22 48H11Z" fill="#14382e"/>
+  <path d="m32 46 12-24h9L41 46h-9Z" fill="#235746"/>
+</svg>

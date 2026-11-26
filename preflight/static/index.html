@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#101418">
+  <title>Preflight · 网络环境总览</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="globe.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#overview">跳到总览</a>
+<svg xmlns="http://www.w3.org/2000/svg" class="icon-defs" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="i-mark" viewBox="0 0 32 32"><path d="M5 25.7 14.7 6h6.2l-9.6 19.7Zm12.9-3.3 5.9-12h4.8l-5.8 12Z" fill="currentColor"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-history" viewBox="0 0 24 24"><path d="M3.1 10a9 9 0 1 1 .9 6.8M3 4.5V10h5.5M12 7v5l3 2"/></symbol>
+    <symbol id="i-tune" viewBox="0 0 24 24"><path d="M4 7h7m4 0h5M4 17h3m4 0h9"/><circle cx="13" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5 8a8 8 0 0 1 13.4-2l1.6 2M19 16A8 8 0 0 1 5.6 18L4 16"/></symbol>
+    <symbol id="i-route" viewBox="0 0 24 24"><circle cx="5.5" cy="17.5" r="2"/><circle cx="18.5" cy="6.5" r="2"/><path d="M7.5 17.5h7a3 3 0 0 0 0-6h-5a2.5 2.5 0 0 1 0-5h7"/></symbol>
+    <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M2.5 13h4L10 5l4 14 3.5-8 1.5 2h2.5"/></symbol>
+    <symbol id="i-time" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.7"/><path d="M12 7.5v5l3.4 2"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="12" rx="1.7"/><path d="M9 20h6m-3-3.5V20"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="m3 7 1.4 1.5L7 5m3 2h10M3 13l1.4 1.5L7 11m3 2h10M3 19h4m3 0h10"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 4v16h16M7 15l4-5 3 2 5-6"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12Z"/><circle cx="12" cy="12" r="2.5"/></symbol>
+    <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="m3 3 18 18M10.6 5.6c.5-.1.9-.1 1.4-.1 6.5 0 10 6.5 10 6.5a19 19 0 0 1-3.1 3.9M6 6.9A20 20 0 0 0 2 12s3.5 6.5 10 6.5c1.9 0 3.5-.5 5-1.4"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-9v.2"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+  </defs>
+</svg>
+
+<div class="shell">
+  <aside class="sidebar" aria-label="主侧栏">
+    <a href="#overview" class="brand" aria-label="Preflight 总览">
+      <span class="brand-mark"><svg aria-hidden="true"><use href="#i-mark"/></svg></span>
+      <span>Preflight</span>
+    </a>
+    <nav class="primary-nav" aria-label="主导航">
+      <a class="nav-link is-active" href="#overview" aria-current="location"><svg class="icon" aria-hidden="true"><use href="#i-grid"/></svg><span>总览</span></a>
+      <a class="nav-link" href="#history"><svg class="icon" aria-hidden="true"><use href="#i-history"/></svg><span>检测记录</span></a>
+      <a id="settings-button" class="nav-link" href="#settings"><svg class="icon" aria-hidden="true"><use href="#i-tune"/></svg><span>检测设置</span></a>
+      <a class="nav-link about-link" href="/about/"><svg class="icon" aria-hidden="true"><use href="#i-info"/></svg><span>使用说明</span></a>
+    </nav>
+    <div class="local-state"><span class="local-icon"><svg class="icon" aria-hidden="true"><use href="#i-monitor"/></svg></span><div><strong>本机服务</strong><span id="service-state" role="status">等待连接</span></div></div>
+  </aside>
+  <main class="content" id="overview" tabindex="-1">
+    <div class="page-intro">
+      <div class="headline"><h1>网络环境总览</h1><p class="updated">上次检测 <time id="last-updated">—</time></p></div>
+      <div class="intro-actions">
+        <label class="switch-control" for="auto-refresh"><input type="checkbox" id="auto-refresh" role="switch"><span class="switch-track" aria-hidden="true"></span><span>自动刷新</span></label>
+        <button id="refresh-button" class="button primary-button" type="button"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg><span>立即检测</span></button>
+      </div>
+    </div>
+
+    <p id="app-notice" class="app-notice" role="alert" hidden></p>
+    <div class="metrics-grid">
+      <section class="exit-card panel" aria-labelledby="exit-heading">
+        <div class="hero-copy">
+          <h2 id="exit-heading" class="card-title"><svg class="icon" aria-hidden="true"><use href="#i-route"/></svg>网络出口</h2>
+          <div class="exit-reading"><div id="exit-country" class="country-value">—</div><span id="hero-status" class="status-pill" data-tone="neutral">待检测</span></div>
+          <div class="ip-block"><span class="field-caption">公网 IP</span><div class="ip-line"><span id="exit-ip">—</span><button id="ip-toggle" type="button" class="icon-button" aria-label="显示完整 IP" aria-pressed="false" title="显示或隐藏完整 IP"><svg class="icon eye-open" aria-hidden="true"><use href="#i-eye"/></svg><svg class="icon eye-closed" aria-hidden="true"><use href="#i-eye-off"/></svg></button></div></div>
+          <p id="exit-detail" class="exit-detail"></p>
+        </div>
+        <div class="globe-wrap"><canvas id="route-globe" width="280" height="230" role="img" aria-label="网络出口的参考位置"></canvas></div>
+      </section>
+      <div class="side-metrics">
+        <section class="small-metric panel latency-panel" aria-labelledby="latency-heading">
+          <h2 id="latency-heading" class="card-title"><svg class="icon" aria-hidden="true"><use href="#i-pulse"/></svg>请求延迟</h2>
+          <div class="latency-line"><div class="metric-reading"><strong id="latency-value">—</strong><span>ms</span></div><small id="latency-detail"></small></div>
+        </section>
+        <section class="small-metric panel time-panel" aria-labelledby="time-heading">
+          <h2 id="time-heading" class="card-title"><svg class="icon" aria-hidden="true"><use href="#i-time"/></svg>本地时区</h2>
+          <dl class="zone-grid"><div><dt>系统</dt><dd id="system-timezone">—</dd></div><div><dt>浏览器</dt><dd id="browser-timezone">—</dd></div><div><dt>自动时区</dt><dd id="auto-timezone">—</dd></div></dl>
+        </section>
+      </div>
+    </div>
+
+    <div class="analysis-grid">
+      <section class="panel result-panel" aria-labelledby="checks-heading">
+        <div class="panel-heading"><h2 id="checks-heading" class="section-title"><svg class="icon" aria-hidden="true"><use href="#i-list"/></svg>环境检查</h2><span id="checks-summary" class="panel-meta" aria-live="polite"></span></div>
+        <div id="checks-list" class="checks-list"><p class="empty-copy">运行检测后，这里会显示各项检查结果。</p></div>
+      </section>
+      <section class="panel trend-panel" aria-labelledby="trend-heading">
+        <div class="panel-heading"><h2 id="trend-heading" class="section-title"><svg class="icon" aria-hidden="true"><use href="#i-chart"/></svg>延迟趋势</h2><span class="chart-key">毫秒</span></div>
+        <div class="chart-wrap"><canvas id="history-chart" width="600" height="185" role="img" aria-label="历史请求延迟趋势，详细数据见检测记录"></canvas><span id="history-empty" class="chart-empty">等待检测数据</span></div>
+        <dl class="chart-stats"><div><dt>检测次数</dt><dd id="history-count">—</dd></div><div><dt>最低延迟</dt><dd id="history-low">—</dd></div><div><dt>最高延迟</dt><dd id="history-high">—</dd></div></dl>
+      </section>
+    </div>
+
+    <section class="panel context-panel" aria-labelledby="context-heading">
+      <div class="panel-heading"><h2 id="context-heading" class="section-title"><svg class="icon" aria-hidden="true"><use href="#i-monitor"/></svg>探测环境</h2></div>
+      <dl class="context-grid"><div><dt>探测路径</dt><dd id="route-detail">—</dd></div><div><dt>系统代理</dt><dd id="proxy-detail">—</dd></div><div><dt>首选语言</dt><dd id="language-detail">—</dd></div><div><dt>Claude Code CLI</dt><dd id="cli-detail">—</dd></div></dl>
+    </section>
+    <section id="history" class="panel history-panel" aria-labelledby="history-heading">
+      <div class="panel-heading"><h2 id="history-heading" class="section-title"><svg class="icon" aria-hidden="true"><use href="#i-history"/></svg>检测记录</h2><span id="history-summary" class="panel-meta"></span></div>
+      <div class="history-table"><div class="history-table-head" aria-hidden="true"><span>检测时间</span><span>出口地区</span><span>延迟</span><span>本机检查</span></div><div id="history-list" aria-label="检测记录"><p class="empty-copy">暂无检测记录</p></div></div>
+    </section>
+    <section id="settings" class="panel settings-panel" aria-labelledby="settings-heading">
+      <div class="panel-heading"><h2 id="settings-heading" class="section-title"><svg class="icon" aria-hidden="true"><use href="#i-tune"/></svg>检测设置</h2></div>
+      <form id="settings-form" class="settings-form">
+        <div class="form-field"><label for="target-input">目标地区</label><input id="target-input" name="country" maxlength="2" pattern="[A-Za-z]{2}" placeholder="TW" autocomplete="off" autocapitalize="characters" spellcheck="false" required aria-describedby="country-help"><small id="country-help">两位地区代码，例如 TW。</small></div>
+        <div class="form-field"><label for="timezone-input">目标时区</label><input id="timezone-input" name="timezone" placeholder="Asia/Taipei" autocomplete="off" autocapitalize="off" spellcheck="false" required aria-describedby="timezone-help"><small id="timezone-help">IANA 时区名称，例如 Asia/Taipei。</small></div>
+        <button class="button secondary-button" type="submit">保存设置</button>
+      </form>
+      <p id="settings-status" class="settings-status" role="status"></p>
+    </section>
+  </main>
+</div>
+</body>
+</html>
