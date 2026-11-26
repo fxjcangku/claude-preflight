@@ -1,8 +1,10 @@
 """Guard ordinary web traffic in a separate Chrome instance using a fixed proxy."""
 
 import http.server
+import json
 import os
 from pathlib import Path
+import re
 import signal
 import stat
 import subprocess
@@ -11,6 +13,12 @@ import threading
 
 
 _CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+_LANGUAGE_KEYS = ("accept_languages", "selected_languages")
+# Chrome's ordinary content-language choices use language, script, region and variant subtags.
+_LANGUAGE_TAG = re.compile(
+    r"[A-Za-z]{2,3}(?:-[A-Za-z]{4})?(?:-(?:[A-Za-z]{2}|[0-9]{3}))?"
+    r"(?:-(?:[A-Za-z0-9]{5,8}|[0-9][A-Za-z0-9]{3}))*"
+)
 
 
 def _options(relay_port, profile):
@@ -55,14 +63,99 @@ def _private_dir(path):
     return path
 
 
+def _unlocked(profile):
+    if os.path.lexists(profile / "SingletonLock"):
+        raise ValueError("专用 Chrome 资料夹已有实例锁，请先完全退出相关浏览器")
+
+
+def _pref_string(path, key):
+    """Only return the requested string from the regular browser's settings."""
+    if path.is_symlink() or not path.is_file():
+        return None
+    try:
+        result = subprocess.run(
+            ["/usr/bin/plutil", "-extract", key, "raw", "-expect", "string",
+             "-o", "-", "--", str(path)],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=3,
+        )
+        if not result.returncode:
+            return result.stdout.decode("utf-8").removesuffix("\n")
+    except (OSError, UnicodeError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def _profile_name(root):
+    name = _pref_string(root / "Local State", "profile.last_used")
+    if name is None:
+        return "Default"
+    if re.fullmatch(r"Default|Profile [0-9]{1,8}", name):
+        return name
+    return None
+
+
+def _language_list(value):
+    if not isinstance(value, str) or len(value) > 2048:
+        return None
+    tags = [tag.strip(" ") for tag in value.split(",")]
+    if len(tags) <= 32 and all(_LANGUAGE_TAG.fullmatch(tag) for tag in tags):
+        return ",".join(tags)
+    return None
+
+
+def _inherit_languages(source, target, target_name):
+    source_name = _profile_name(source)
+    if not source_name or (source / source_name).is_symlink():
+        return
+    prefs = source / source_name / "Preferences"
+    desired = {key: _language_list(_pref_string(prefs, "intl." + key)) for key in _LANGUAGE_KEYS}
+    languages = desired["accept_languages"] or desired["selected_languages"]
+    if not languages:
+        return
+    desired = {key: value or languages for key, value in desired.items()}
+    folder = _private_dir(target / target_name)
+    path = folder / "Preferences"
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise ValueError("专用 Chrome 偏好文件无效")
+    try:
+        with path.open(encoding="utf-8") as stream:
+            existing = json.load(stream)
+    except FileNotFoundError:
+        existing = {}
+    if not isinstance(existing, dict) or not isinstance(existing.get("intl", {}), dict):
+        raise ValueError("无法读取专用 Chrome 的语言偏好")
+    intl = existing.setdefault("intl", {})
+    for key, value in desired.items():
+        current = intl.get(key)
+        if current not in (None, "") and _language_list(current) not in ("zh-CN,zh", value):
+            return  # Honor language choices made in the dedicated profile itself.
+    if all(intl.get(key) == value for key, value in desired.items()):
+        return
+    intl.update(desired)
+    with tempfile.NamedTemporaryFile(dir=folder, delete=False) as staged:
+        tmp = Path(staged.name)
+        try:
+            staged.write(json.dumps(existing, ensure_ascii=True, separators=(",", ":")).encode())
+            staged.flush()
+            os.fsync(staged.fileno())
+            _unlocked(target)
+            os.replace(tmp, path)
+        finally:
+            tmp.unlink(missing_ok=True)
+
+
 def web_command(relay_port):
     """Use a persistent, owner-only profile; caller holds the web session lock."""
     support = Path.home() / "Library" / "Application Support"
     parent = _private_dir(support / "Claude Preflight")
     profile = _private_dir(parent / "Guarded Chrome")
-    if os.path.lexists(profile / "SingletonLock"):
-        raise ValueError("专用 Chrome 资料夹已有实例锁，请先完全退出相关浏览器")
-    return _options(relay_port, profile) + ["--app=https://claude.ai/"]
+    _unlocked(profile)
+    command = _options(relay_port, profile)
+    name = _profile_name(profile)
+    if name:
+        _inherit_languages(support / "Google" / "Chrome", profile, name)
+        command.append(f"--profile-directory={name}")
+    return command + ["--app=https://claude.ai/"]
 
 
 class _Endpoint(http.server.BaseHTTPRequestHandler):
