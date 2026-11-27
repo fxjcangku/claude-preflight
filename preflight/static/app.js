@@ -705,6 +705,13 @@
   }
   window.addEventListener("scroll", updateNav, { passive: true });
   window.addEventListener("hashchange", updateNav);
+  let lastFocusRefresh = 0;
+  window.addEventListener("focus", () => {
+    const now = Date.now();
+    if (now - lastFocusRefresh < 2500) return;
+    lastFocusRefresh = now;
+    loadReadiness();
+  });
   if ("ResizeObserver" in window) new ResizeObserver(drawChart).observe(byId("history-chart").parentElement);
   else window.addEventListener("resize", drawChart);
   updateNav();

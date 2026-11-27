@@ -1100,6 +1100,8 @@ def _apply_phase(phase, node):
         if unconfirmed:
             return _reply("pending", f"已有 {unconfirmed} 个受管会话未确认锁定，请先退出对应 Claude 客户端后重试。",
                           "quitClaude")
+        with _locked_state(create=False) as (_folder_path, backup_path):
+            had_backup = _read_backup(backup_path) is not None
         config = _read_flutter_config()
         profile_id, profile = _active_profile(config)
         candidates = _taiwan_candidates(profile_id, profile)
@@ -1113,12 +1115,13 @@ def _apply_phase(phase, node):
                 if guard._identity() == identity and country == "TW":
                     return _reply("ok", "已核验 OneVPN 台湾节点与 Claude 分流规则，实测出口为 TW。",
                                   needRestart=False, node=token, candidates=tokens,
-                                  measuredCountry="TW", lockedSessions=confirmed)
+                                  measuredCountry="TW", lockedSessions=confirmed,
+                                  hadBackupBefore=had_backup)
             except (OSError, ValueError, subprocess.SubprocessError):
                 pass
         return _reply("pending", "已锁定受管连接，准备退出 OneVPN 以安全写入台湾节点与分流规则。",
                       "restartOneVPN", needRestart=True, node=token, candidates=tokens,
-                      lockedSessions=confirmed)
+                      lockedSessions=confirmed, hadBackupBefore=had_backup)
 
     if phase == "commit":
         gui, _core = _onevpn_processes()
@@ -1177,10 +1180,11 @@ def _apply_phase(phase, node):
 
 
 def _restore_phase(phase):
-    with _locked_state(create=False) as (_folder_path, backup_path):
-        backup = _read_backup(backup_path)
-    if backup is None:
-        return _reply("ok", "没有由 Preflight 修改且需要复原的 OneVPN 设置。", needRestart=False)
+    if phase != "verify":
+        with _locked_state(create=False) as (_folder_path, backup_path):
+            backup = _read_backup(backup_path)
+        if backup is None:
+            return _reply("ok", "没有由 Preflight 修改且需要复原的 OneVPN 设置。", needRestart=False)
 
     if phase == "prepare":
         confirmed, unconfirmed = guard.lock_sessions()
@@ -1207,15 +1211,28 @@ def _restore_phase(phase):
                 return _reply("error", "首次配置时的 OneVPN 订阅已不存在，已保留备份以便核查。")
             conflicts = _restore_profile(target_profile, backup)
             conflicts.extend(_restore_autoconnect(config, backup))
+            orig_auto_run = (backup.get("originalConnect") or {}).get("autoRun")
             _write_flutter_config(config)
             backup_path.unlink(missing_ok=True)
             if conflicts:
                 return _reply("pending", "已复原未冲突的 OneVPN 设置，以下项目保留了用户后续修改：" + "；".join(conflicts),
-                              "relaunchOneVPN", conflicts=conflicts)
+                              "relaunchOneVPN", conflicts=conflicts, restoredAutoRun=bool(orig_auto_run))
             return _reply("pending", "已按备份复原 OneVPN 设置，正在重开 OneVPN。",
-                          "relaunchOneVPN", conflicts=[])
+                          "relaunchOneVPN", conflicts=[], restoredAutoRun=bool(orig_auto_run))
 
     # phase == "verify"
+    try:
+        config = _read_flutter_config()
+        if (config.get("appSetting") or {}).get("autoRun") is False:
+            # Wait briefly for GUI launch; do not stall 15s when original autoRun was False.
+            for _ in range(6):
+                gui, _core = _onevpn_processes()
+                if gui:
+                    break
+                time.sleep(0.5)
+            return _reply("ok", "已按备份复原 OneVPN 设置（原自动连接开关为关闭，如需联网请在 OneVPN 中手动开启）。")
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
     try:
         _wait_onevpn_ready(timeout=15.0)
     except ValueError:

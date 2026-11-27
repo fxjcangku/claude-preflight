@@ -147,8 +147,15 @@ class VpnSetupTests(unittest.TestCase):
         r_commit = vpn.configure_vpn("restore", "commit")
         self.assertEqual(r_commit["actionRequired"], "relaunchOneVPN")
         self.assertEqual(r_commit["conflicts"], [])
+        self.assertFalse(r_commit["restoredAutoRun"])
         self.assertEqual(self.config, original_snapshot)
         self.assertFalse(backup_file.exists())
+
+        # Verify restore returns promptly when original autoRun was False
+        self.running_gui = [(101, 501, "start", "/Applications/OneVPN.app/Contents/MacOS/OneVPN")]
+        r_verify = vpn.configure_vpn("restore", "verify")
+        self.assertEqual(r_verify["status"], "ok")
+        self.assertIn("原自动连接开关为关闭", r_verify["message"])
 
     def test_candidate_named_taiwan_but_non_tw_exit_is_rejected(self):
         prep = vpn.configure_vpn("apply", "prepare")

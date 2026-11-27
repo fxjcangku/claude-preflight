@@ -246,7 +246,9 @@ private func configureVpnFlow(restore: Bool) throws -> SetupResult {
         return SetupResult(status: "error", message: "当前 OneVPN 订阅中未找到台湾候选节点。")
     }
 
+    let hadBackupBefore = (prep["hadBackupBefore"] as? Bool) ?? false
     var lastError = "未能实测确认台湾出口（TW）。"
+    var committedAny = false
     let maxAttempts = min(candidates.count, 4)
     for index in 0..<maxAttempts {
         let token = candidates[index]
@@ -259,6 +261,7 @@ private func configureVpnFlow(restore: Bool) throws -> SetupResult {
             try? relaunchOneVPN()
             return SetupResult(status: "error", message: committed["message"] as? String ?? "写入 OneVPN 偏好失败。")
         }
+        committedAny = true
         try relaunchOneVPN()
         let verified = try request(["configure-vpn", "--action", "apply", "--phase", "verify", "--node", token])
         if verified["status"] as? String == "ok" {
@@ -267,6 +270,21 @@ private func configureVpnFlow(restore: Bool) throws -> SetupResult {
         lastError = verified["message"] as? String ?? lastError
         if verified["retryable"] as? Bool != true {
             break
+        }
+    }
+    // If all Taiwan candidates failed (e.g. Taiwan nodes temporarily down) and we created
+    // the backup on this attempt, automatically roll back OneVPN so the user does not lose internet.
+    if committedAny && !hadBackupBefore {
+        do {
+            try quitOneVPNGracefully()
+            _ = try request(["configure-vpn", "--action", "restore", "--phase", "commit"])
+            try relaunchOneVPN()
+            return SetupResult(
+                status: "error",
+                message: lastError + " 已尝试全部 \(maxAttempts) 个台湾候选节点均未通过，已自动回退至切换前的 OneVPN 节点以恢复网络。"
+            )
+        } catch {
+            try? relaunchOneVPN()
         }
     }
     return SetupResult(status: "error", message: lastError + "（已保留首次备份，可检查订阅后重试或一键复原。）")
