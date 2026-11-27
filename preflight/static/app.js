@@ -163,7 +163,11 @@
         makeRcRow("台湾候选节点", vpn.taiwanCandidates > 0 ? `${vpn.taiwanCandidates} 个` : (vpn.onevpnInstalled ? "未找到" : "以实测为准"),
           vpn.taiwanCandidates > 0 ? "good" : (vpn.onevpnInstalled ? "bad" : "neutral")),
         makeRcRow("Claude 分流", vpn.onevpnInstalled
-          ? (vpn.claudeRulesReady ? `${vpn.claudeRulesCount}/6 已就绪` : `${vpn.claudeRulesCount}/6 待配置`)
+          ? (vpn.claudeRulesReady
+            ? `${vpn.claudeRulesCount}/6 已就绪`
+            : (vpn.claudeRulesCount >= 6 && !vpn.taiwanSelected
+              ? `${vpn.claudeRulesCount}/6（待切台湾节点）`
+              : `${vpn.claudeRulesCount}/6 待配置`))
           : "由当前 VPN 路由",
           vpn.onevpnInstalled ? (vpn.claudeRulesReady ? "good" : "pending") : "neutral")
       );

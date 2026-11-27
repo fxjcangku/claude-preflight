@@ -144,17 +144,19 @@ private func quitOneVPNGracefully() throws {
     for app in running {
         app.terminate()
     }
-    // Also ask politely via AppleScript in case menu-bar app ignores standard terminate
-    let quitScript = process("/usr/bin/osascript", ["-e", "tell application id \"\(oneVpnBundleId)\" to quit"])
-    try? quitScript.run()
-    quitScript.waitUntilExit()
-
     let deadline = Date().addingTimeInterval(15.0)
+    var sentAppleScriptQuit = false
     while Date() < deadline {
         if NSRunningApplication.runningApplications(withBundleIdentifier: oneVpnBundleId).isEmpty {
             // Brief settle time for Flutter SharedPreferences flush
-            Thread.sleep(forTimeInterval: 0.6)
+            Thread.sleep(forTimeInterval: 0.7)
             return
+        }
+        if !sentAppleScriptQuit && Date().timeIntervalSince(deadline) > -13.5 {
+            sentAppleScriptQuit = true
+            let quitScript = process("/usr/bin/osascript", ["-e", "tell application id \"\(oneVpnBundleId)\" to quit"])
+            try? quitScript.run()
+            quitScript.waitUntilExit()
         }
         Thread.sleep(forTimeInterval: 0.3)
     }
@@ -193,6 +195,28 @@ private func configureVpnFlow(restore: Bool) throws -> SetupResult {
     }
     if prep["actionRequired"] as? String == "quitClaude" {
         return SetupResult(status: "pending", message: message)
+    }
+    if !restore, prep["actionRequired"] as? String == "launchVpnApp",
+       let rawPath = prep["openPath"] as? String, rawPath.hasPrefix("/Applications/"), rawPath.hasSuffix(".app"),
+       FileManager.default.fileExists(atPath: rawPath) {
+        let appURL = URL(fileURLWithPath: rawPath)
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = false
+        let sem = DispatchSemaphore(value: 0)
+        NSWorkspace.shared.openApplication(at: appURL, configuration: config) { _, _ in sem.signal() }
+        _ = sem.wait(timeout: .now() + 8.0)
+        // Poll up to 12s for generic VPN proxy/tunnel & TW exit
+        var lastReply: Reply = prep
+        for _ in 0..<6 {
+            Thread.sleep(forTimeInterval: 2.0)
+            if let verified = try? request(["configure-vpn", "--action", "apply", "--phase", "verify"]) {
+                lastReply = verified
+                if verified["status"] as? String == "ok" {
+                    return SetupResult(status: "ok", message: verified["message"] as? String ?? "已自动启动 VPN 并确认台湾出口（TW）。")
+                }
+            }
+        }
+        return SetupResult(status: "error", message: lastReply["message"] as? String ?? "已打开 VPN 客户端，但尚未检测到台湾出口（TW），请在客户端连接台湾节点后重试。")
     }
     guard prep["actionRequired"] as? String == "restartOneVPN" else {
         return SetupResult(status: status, message: message)
@@ -401,10 +425,18 @@ private func setup(_ action: String) throws -> SetupResult {
 
     case "configureAll":
         var steps = [
-            StepStatus(id: "region", label: "台湾地区与台北时区", status: "pending", detail: "待执行"),
-            StepStatus(id: "vpn", label: "OneVPN 台湾节点与分流", status: "pending", detail: "待执行"),
-            StepStatus(id: "firewall", label: "LuLu 防火墙、代理与监护", status: "pending", detail: "待执行"),
+            StepStatus(id: "region", label: "台湾地区与台北时区", status: "skipped", detail: "尚未执行"),
+            StepStatus(id: "vpn", label: "OneVPN 台湾节点与分流", status: "skipped", detail: "尚未执行"),
+            StepStatus(id: "firewall", label: "LuLu 防火墙、代理与监护", status: "skipped", detail: "尚未执行"),
         ]
+        // Helper to reflect actual LuLu status instead of misleading "待批准" when an earlier step fails
+        let fillFirewallReadonly = {
+            if let st = try? firewall("status"), st.status == "ok" {
+                steps[2] = StepStatus(id: "firewall", label: "LuLu 防火墙、代理与监护", status: "ok", detail: st.message)
+            } else {
+                steps[2] = StepStatus(id: "firewall", label: "LuLu 防火墙、代理与监护", status: "skipped", detail: "因前序步骤未通过，暂未执行")
+            }
+        }
         // 1. Region & Timezone
         let regionMsg: String
         do {
@@ -413,6 +445,7 @@ private func setup(_ action: String) throws -> SetupResult {
         } catch {
             let errMsg = (error as? HostFailure)?.errorDescription ?? "地区和时区设置未能完成。"
             steps[0] = StepStatus(id: "region", label: "台湾地区与台北时区", status: "error", detail: errMsg)
+            fillFirewallReadonly()
             return SetupResult(status: "error", message: errMsg, steps: steps)
         }
         // 2. OneVPN Taiwan node + Claude split rules + real TW exit probe
@@ -423,9 +456,11 @@ private func setup(_ action: String) throws -> SetupResult {
         } catch {
             let errMsg = (error as? HostFailure)?.errorDescription ?? "OneVPN 节点配置未能完成。"
             steps[1] = StepStatus(id: "vpn", label: "OneVPN 台湾节点与分流", status: "error", detail: errMsg)
+            fillFirewallReadonly()
             return SetupResult(status: "error", message: "1. " + regionMsg + "\n2. " + errMsg, steps: steps)
         }
         if vpnRes.status != "ok" {
+            fillFirewallReadonly()
             return SetupResult(status: vpnRes.status,
                                message: "1. " + regionMsg + "\n2. " + vpnRes.message,
                                destination: vpnRes.destination, steps: steps)
@@ -450,9 +485,9 @@ private func setup(_ action: String) throws -> SetupResult {
 
     case "restoreConfiguration":
         var steps = [
-            StepStatus(id: "firewall", label: "复原防火墙、代理与监护", status: "pending", detail: "待执行"),
-            StepStatus(id: "vpn", label: "复原 OneVPN 设置", status: "pending", detail: "待执行"),
-            StepStatus(id: "region", label: "复原地区与时区", status: "pending", detail: "待执行"),
+            StepStatus(id: "firewall", label: "复原防火墙、代理与监护", status: "skipped", detail: "尚未执行"),
+            StepStatus(id: "vpn", label: "复原 OneVPN 设置", status: "skipped", detail: "尚未执行"),
+            StepStatus(id: "region", label: "复原地区与时区", status: "skipped", detail: "尚未执行"),
         ]
         // 1. Firewall / Dock watcher / LuLu managed rules / Profile
         let fwRes: SetupResult

@@ -29,6 +29,10 @@ def make_config(selected="极速|🇯🇵 日本 01", added_rules=None, enable=F
     return {
         "currentProfileId": "prof-1",
         "windowProps": {"width": 900},
+        "appSetting": {"autoRun": False, "autoLaunch": True, "lastSelectedNodeIndex": 1},
+        "networkProps": {"systemProxy": False},
+        "vpnProps": {"enable": False, "systemProxy": False},
+        "patchClashConfig": {"tun": {"enable": False}},
         "profiles": [
             {
                 "id": "prof-1",
@@ -113,6 +117,13 @@ class VpnSetupTests(unittest.TestCase):
         self.assertEqual(prof["selectedMap"]["GLOBAL"], "DIRECT")
         self.assertEqual(prof["selectedMap"]["Proxies"], "极速|🇹🇼 台湾 01")
         self.assertTrue(prof["overrideData"]["enable"])
+        # Auto-connect flags and lastSelectedNodeIndex must be updated so relaunched OneVPN connects to TW automatically
+        self.assertTrue(self.config["appSetting"]["autoRun"])
+        self.assertEqual(self.config["appSetting"]["lastSelectedNodeIndex"], 2)
+        self.assertTrue(self.config["networkProps"]["systemProxy"])
+        self.assertTrue(self.config["vpnProps"]["enable"])
+        self.assertTrue(self.config["vpnProps"]["systemProxy"])
+        self.assertTrue(self.config["patchClashConfig"]["tun"]["enable"])
         values = [r["value"] for r in prof["overrideData"]["rule"]["addedRules"]]
         self.assertIn("DOMAIN-SUFFIX,example.org,DIRECT", values)
         for domain in vpn._CLAUDE_DOMAINS:

@@ -459,6 +459,130 @@ def _is_profile_configured_for_node(profile, target_node):
     return all(domain in found for domain in _CLAUDE_DOMAINS)
 
 
+def _node_index(profile_id, target_node):
+    """Return the 0-based index of target_node in OneVPN's Proxies group or proxies list."""
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", profile_id):
+        return None
+    yaml_path = _profiles_dir() / f"{profile_id}.yaml"
+    if yaml_path.is_symlink() or not yaml_path.is_file():
+        return None
+    text = yaml_path.read_text(encoding="utf-8", errors="replace")
+    proxies, groups = _parse_clash_profile(text)
+    if "Proxies" in groups and target_node in groups["Proxies"]["proxies"]:
+        return groups["Proxies"]["proxies"].index(target_node)
+    if target_node in proxies:
+        return proxies.index(target_node)
+    return None
+
+
+def _ensure_autoconnect(config, backup, target_node_index=None):
+    """Enable OneVPN autoRun, systemProxy, TUN, and lastSelectedNodeIndex so relaunch connects to TW automatically.
+
+    Records original values once in backup['originalConnect'] for clean restore.
+    """
+    app_setting = config.get("appSetting")
+    if not isinstance(app_setting, dict):
+        app_setting = {}
+        config["appSetting"] = app_setting
+
+    net_props = config.get("networkProps")
+    if not isinstance(net_props, dict):
+        net_props = {}
+        config["networkProps"] = net_props
+
+    vpn_props = config.get("vpnProps")
+    if not isinstance(vpn_props, dict):
+        vpn_props = {}
+        config["vpnProps"] = vpn_props
+
+    patch_clash = config.get("patchClashConfig")
+    if not isinstance(patch_clash, dict):
+        patch_clash = {}
+        config["patchClashConfig"] = patch_clash
+
+    tun_cfg = patch_clash.get("tun")
+    if not isinstance(tun_cfg, dict):
+        tun_cfg = {}
+        patch_clash["tun"] = tun_cfg
+
+    if "originalConnect" not in backup:
+        backup["originalConnect"] = {
+            "autoRun": app_setting.get("autoRun"),
+            "lastSelectedNodeIndex": app_setting.get("lastSelectedNodeIndex"),
+            "networkSystemProxy": net_props.get("systemProxy"),
+            "vpnEnable": vpn_props.get("enable"),
+            "vpnSystemProxy": vpn_props.get("systemProxy"),
+            "tunEnable": tun_cfg.get("enable"),
+        }
+
+    app_setting["autoRun"] = True
+    if target_node_index is not None:
+        app_setting["lastSelectedNodeIndex"] = target_node_index
+        backup["appliedNodeIndex"] = target_node_index
+    net_props["systemProxy"] = True
+    vpn_props["enable"] = True
+    vpn_props["systemProxy"] = True
+    tun_cfg["enable"] = True
+
+
+def _restore_autoconnect(config, backup):
+    """Restore autoRun/lastSelectedNodeIndex/systemProxy/tun flags saved before first setup."""
+    orig = backup.get("originalConnect")
+    if not isinstance(orig, dict):
+        return []
+    conflicts = []
+
+    def _restore_bool(container, key, orig_val, label):
+        if not isinstance(container, dict):
+            return
+        cur = container.get(key)
+        if cur is True:
+            if orig_val is None:
+                container.pop(key, None)
+            else:
+                container[key] = orig_val
+        elif cur != orig_val:
+            conflicts.append(f"OneVPN 的{label}已被用户手动修改，已保留当前设置")
+
+    app_setting = config.get("appSetting")
+    if isinstance(app_setting, dict) and "appliedNodeIndex" in backup:
+        cur_idx = app_setting.get("lastSelectedNodeIndex")
+        orig_idx = orig.get("lastSelectedNodeIndex")
+        if cur_idx == backup["appliedNodeIndex"]:
+            if orig_idx is None:
+                app_setting.pop("lastSelectedNodeIndex", None)
+            else:
+                app_setting["lastSelectedNodeIndex"] = orig_idx
+        elif cur_idx != orig_idx:
+            conflicts.append("OneVPN 的默认节点索引已被用户手动修改，已保留当前设置")
+
+    _restore_bool(app_setting, "autoRun", orig.get("autoRun"), "启动自动连接开关")
+    _restore_bool(config.get("networkProps"), "systemProxy", orig.get("networkSystemProxy"), "系统代理开关")
+    _restore_bool(config.get("vpnProps"), "enable", orig.get("vpnEnable"), "VPN 总开关")
+    _restore_bool(config.get("vpnProps"), "systemProxy", orig.get("vpnSystemProxy"), "VPN 系统代理开关")
+    patch_clash = config.get("patchClashConfig")
+    if isinstance(patch_clash, dict):
+        _restore_bool(patch_clash.get("tun"), "enable", orig.get("tunEnable"), "TUN 隧道开关")
+    return conflicts
+
+
+def _is_autoconnect_enabled(config, expected_node_index=None):
+    app_setting = config.get("appSetting") if isinstance(config.get("appSetting"), dict) else {}
+    net_props = config.get("networkProps") if isinstance(config.get("networkProps"), dict) else {}
+    vpn_props = config.get("vpnProps") if isinstance(config.get("vpnProps"), dict) else {}
+    patch_clash = config.get("patchClashConfig") if isinstance(config.get("patchClashConfig"), dict) else {}
+    tun_cfg = patch_clash.get("tun") if isinstance(patch_clash.get("tun"), dict) else {}
+    idx_ok = expected_node_index is None or app_setting.get("lastSelectedNodeIndex") == expected_node_index
+    return (
+        idx_ok
+        and app_setting.get("autoRun") is True
+        and net_props.get("systemProxy") is True
+        and vpn_props.get("enable") is True
+        and vpn_props.get("systemProxy") is True
+        and tun_cfg.get("enable") is True
+    )
+
+
 def _merge_profile(profile, target_node, backup):
     """Merge Taiwan node selection and Claude rules into profile in-place.
 
@@ -919,6 +1043,17 @@ def configure_vpn(action="status", phase="prepare", node=None):
                 needRestart=False,
                 measuredCountry="TW",
             )
+        if phase == "prepare" and info["detectedApps"] and not info["running"]:
+            first = info["detectedApps"][0]["name"]
+            bundle = next((b for label, b, _ in _KNOWN_VPN_APPS if label == first), None)
+            if bundle and (Path("/Applications") / bundle).is_dir():
+                return _reply(
+                    "pending",
+                    f"检测到 {first} 未启动，正在自动打开并等待代理就绪。",
+                    "launchVpnApp",
+                    openPath=str(Path("/Applications") / bundle),
+                    needRestart=False,
+                )
         if info["liveCountry"]:
             return _reply(
                 "error",
@@ -998,15 +1133,17 @@ def _apply_phase(phase, node):
             if backup is not None and backup["profileId"] != profile_id:
                 raise ValueError("检测到 OneVPN 活动订阅与首次备份不同，请先复原后再切换。")
             updated_backup = _merge_profile(profile, target_node, backup)
+            target_idx = _node_index(profile_id, target_node)
+            _ensure_autoconnect(config, updated_backup, target_node_index=target_idx)
             # Save baseline backup BEFORE modifying OneVPN defaults
             _atomic_write_json(backup_path, updated_backup)
             _write_flutter_config(config)
             # Read back to confirm write persisted
             verify_config = _read_flutter_config()
             _vid, verify_profile = _active_profile(verify_config)
-            if not _is_profile_configured_for_node(verify_profile, target_node):
+            if not _is_profile_configured_for_node(verify_profile, target_node) or not _is_autoconnect_enabled(verify_config, expected_node_index=target_idx):
                 raise ValueError("写入 OneVPN 偏好后读回校验未通过，已保留备份。")
-            return _reply("pending", "已安全合并 OneVPN 台湾节点和 Claude 分流规则，正在重开 OneVPN 并实测出口。",
+            return _reply("pending", "已安全合并 OneVPN 台湾节点、分流规则与自动连接开关，正在重开 OneVPN 并实测出口。",
                           "relaunchOneVPN", node=token)
 
     # phase == "verify"
@@ -1017,10 +1154,17 @@ def _apply_phase(phase, node):
     target_node, token = _select_candidate(candidates, node)
     if not _is_profile_configured_for_node(profile, target_node):
         raise ValueError("OneVPN 重开后读回配置与预期不符，已保留备份。")
-    try:
-        country, _ip = guard._trace_via_port(identity.port, seconds=10)
-    except (OSError, ValueError, subprocess.SubprocessError):
-        return _reply("error", "OneVPN 代理已就绪，但台湾出口实测超时或失败，无法确认出口为 TW。",
+    country = None
+    for attempt in range(4):
+        try:
+            country, _ip = guard._trace_via_port(identity.port, seconds=8)
+            break
+        except (OSError, ValueError, subprocess.SubprocessError):
+            if attempt < 3:
+                time.sleep(1.5)
+                identity = _wait_onevpn_ready(timeout=8.0)
+    if country is None:
+        return _reply("error", "OneVPN 代理已自动连接，但台湾出口实测超时或失败，无法确认出口为 TW。",
                       measuredCountry=None, node=token, retryable=True)
     if guard._identity() != identity:
         return _reply("error", "出口实测期间 OneVPN 状态发生变化，请重试验证。",
@@ -1028,7 +1172,7 @@ def _apply_phase(phase, node):
     if country != "TW":
         return _reply("error", f"当前候选节点实测出口为 {country}，不是台湾（TW）。",
                       measuredCountry=country, node=token, retryable=True)
-    return _reply("ok", "已配置 OneVPN 台湾节点及 Claude 分流规则，并实测确认出口为 TW。",
+    return _reply("ok", "已自动连接 OneVPN 台湾节点及 Claude 分流规则，并实测确认出口为 TW。",
                   measuredCountry="TW", node=token)
 
 
@@ -1062,6 +1206,7 @@ def _restore_phase(phase):
             if target_profile is None:
                 return _reply("error", "首次配置时的 OneVPN 订阅已不存在，已保留备份以便核查。")
             conflicts = _restore_profile(target_profile, backup)
+            conflicts.extend(_restore_autoconnect(config, backup))
             _write_flutter_config(config)
             backup_path.unlink(missing_ok=True)
             if conflicts:
