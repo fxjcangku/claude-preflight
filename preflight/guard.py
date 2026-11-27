@@ -140,6 +140,100 @@ class _Identity:
     system_zone: str = ""
 
 
+def _onevpn_runtime_config():
+    path = Path.home() / "Library/Application Support/OneVPN/config.json"
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("未找到 OneVPN 运行时配置文件")
+    info = path.stat()
+    if info.st_uid != os.getuid():
+        raise ValueError("OneVPN 运行时配置文件所有者异常")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("OneVPN 运行时配置格式无效")
+    return data
+
+
+def _verify_ipc_pair(system_text, gui_pid, core_pid):
+    """Verify OneVPN GUI and root OneVPNCore share an active local UNIX socket pair."""
+    gui_tag = f"OneVPN:{gui_pid}"
+    core_tag = f"OneVPNCore:{core_pid}"
+    gui_peers = {}
+    core_addrs = set()
+    for line in system_text.splitlines():
+        if gui_tag not in line and core_tag not in line:
+            continue
+        fields = line.split()
+        if len(fields) < 12 or fields[1] != "stream":
+            continue
+        addr, conn = fields[0], fields[5]
+        if gui_tag in fields:
+            gui_peers[addr] = conn
+        if core_tag in fields:
+            core_addrs.add(addr)
+    if not any(conn in core_addrs for conn in gui_peers.values()):
+        raise ValueError("未确认 OneVPN 界面与当前 OneVPNCore 的活跃通信连接")
+
+
+def _verify_listener_restricted(system_text, port, gui_pid, core_pid):
+    """Corroborate root OneVPNCore listener when macOS 27 hides TCP PCB tables from non-root."""
+    _verify_ipc_pair(system_text, gui_pid, core_pid)
+    cfg = _onevpn_runtime_config()
+    configured_ports = {cfg.get("mixed-port"), cfg.get("port")}
+    if port not in configured_ports:
+        raise ValueError("系统代理端口与 OneVPN 运行时监听端口不一致")
+    # Ensure no non-root user process is squatting on this loopback port.
+    probe = subprocess.run(
+        ["/usr/sbin/lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"],
+        env=_ENV, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL, text=True, timeout=2, check=False,
+    )
+    if probe.stdout.strip():
+        raise ValueError("检测到非特权进程占用本地代理端口，无法确认由 OneVPNCore 独占")
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(1.0)
+        if sock.connect_ex(("127.0.0.1", port)) != 0:
+            raise ValueError("本地 HTTPS 代理端口未处于监听状态")
+
+
+def _tunnels_restricted(system_text, gui_pid, core_pid):
+    """Identify active IPv4 utun interface when macOS 27 redacts kctl owners in netstat."""
+    if "com.apple.net.utun_control" not in system_text:
+        raise ValueError("无法确认系统存在活动的 utun 控制连接")
+    _verify_ipc_pair(system_text, gui_pid, core_pid)
+    cfg = _onevpn_runtime_config()
+    tun = cfg.get("tun")
+    if not isinstance(tun, dict) or tun.get("enable") is not True:
+        raise ValueError("OneVPN 运行时未启用 TUN 隧道")
+    ifconfig = _output(["/sbin/ifconfig"])
+    units = []
+    current = None
+    up_running = False
+    has_ipv4 = False
+    for line in ifconfig.splitlines():
+        if not line.startswith(("\t", " ")):
+            if current is not None and up_running and has_ipv4:
+                units.append(current)
+            match = re.match(r"^utun(\d+):\s*flags=\w+<([^>]+)>", line)
+            if match:
+                current = int(match.group(1))
+                flags = set(match.group(2).split(","))
+                up_running = {"UP", "RUNNING"}.issubset(flags)
+                has_ipv4 = False
+            else:
+                current = None
+                up_running = False
+                has_ipv4 = False
+        elif current is not None:
+            stripped = line.strip()
+            if stripped.startswith("inet ") and not stripped.startswith("inet 127."):
+                has_ipv4 = True
+    if current is not None and up_running and has_ipv4:
+        units.append(current)
+    if not units:
+        raise ValueError("无法确认 OneVPN 活动的 IPv4 utun 隧道接口")
+    return tuple(sorted(set(units)))
+
+
 def _identity():
     table = _processes()
     core_path = str(Path.home() / "Library/Application Support/OneVPN/OneVPNCore")
@@ -148,8 +242,19 @@ def _identity():
     if len(gui) != 1 or len(core) != 1:
         raise ValueError("未找到可唯一确认的 OneVPN 界面和 root 核心进程")
     port = _proxy_port(_output(["/usr/sbin/scutil", "--proxy"]))
-    _verify_listener(_output(["/usr/sbin/netstat", "-anv", "-p", "tcp"]), port, core[0][0])
-    tunnels = _tunnels(_output(["/usr/sbin/netstat", "-anv", "-f", "system"]), core[0][0])
+    tcp_text = _output(["/usr/sbin/netstat", "-anv", "-p", "tcp"])
+    sys_text = _output(["/usr/sbin/netstat", "-anv", "-f", "system"])
+    if tcp_text.strip():
+        _verify_listener(tcp_text, port, core[0][0])
+    else:
+        _verify_listener_restricted(sys_text, port, gui[0][0], core[0][0])
+    try:
+        tunnels = _tunnels(sys_text, core[0][0])
+    except ValueError:
+        if "kctl" not in sys_text and "com.apple.net.utun_control" in sys_text:
+            tunnels = _tunnels_restricted(sys_text, gui[0][0], core[0][0])
+        else:
+            raise
     for number in tunnels:
         name = f"utun{number}"
         link = _output(["/sbin/ifconfig", name]).splitlines()

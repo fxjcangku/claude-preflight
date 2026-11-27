@@ -64,6 +64,46 @@ class GuardTests(unittest.TestCase):
         with patch.object(guard, "_processes", return_value=[]), self.assertRaises(ValueError):
             guard._identity()
 
+    def test_macos27_restricted_netstat_corroboration_and_squatter_rejection(self):
+        processes = [(10, os.getuid(), "start", guard._GUI),
+                     (1007, 0, "start", str(Path.home() / "Library/Application Support/OneVPN/OneVPNCore"))]
+        sys_text = (
+            "a9e7 stream 0 0 0 8318 0 0 1 1 8192 8192 OneVPN:10 00102 /tmp/OneVPNSocket.sock\n"
+            "8318 stream 0 0 0 a9e7 0 0 1 1 8192 8192 OneVPNCore:1007 00182\n"
+            "       5       29        9   524288   524288 com.apple.net.utun_control \n"
+        )
+        ifconfig_all = (
+            "utun0: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1380\n"
+            "\tinet6 fe80::1%utun0 prefixlen 64\n"
+            "utun8: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 9000\n"
+            "\tinet 198.18.0.1 --> 198.18.0.1 netmask 0xfffffffc\n"
+        )
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
+            srv.bind(("127.0.0.1", 0))
+            srv.listen(1)
+            port = srv.getsockname()[1]
+            scutil = _SCUTIL.replace("7890", str(port))
+            cfg = {"mixed-port": port, "tun": {"enable": True}}
+            with patch.object(guard, "_processes", return_value=processes), \
+                 patch.object(guard, "_onevpn_runtime_config", return_value=cfg), \
+                 patch.object(guard.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "")), \
+                 patch.object(guard, "_output", side_effect=[
+                     scutil, "", sys_text, ifconfig_all,
+                     "utun8: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 9000", selection()
+                 ]):
+                found = guard._identity()
+                self.assertEqual((found.core[0], found.port, found.tunnels), (1007, port, (8,)))
+
+            # If a non-root user process is squatting on the port (lsof non-empty), reject!
+            with patch.object(guard, "_onevpn_runtime_config", return_value=cfg), \
+                 patch.object(guard.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "python 999 user TCP 127.0.0.1:7890 (LISTEN)")):
+                with self.assertRaisesRegex(ValueError, "非特权进程"):
+                    guard._verify_listener_restricted(sys_text, port, 10, 1007)
+
+            # If IPC socket pair does not match OneVPN:10 <-> OneVPNCore:1007, reject!
+            with self.assertRaisesRegex(ValueError, "活跃通信连接"):
+                guard._verify_ipc_pair(sys_text.replace("OneVPNCore:1007", "Other:1007"), 10, 1007)
+
     def test_trace_and_child_pin_proxy_without_inherited_bypass(self):
         env = {"hTTps_PrOxy": "malformed", "HTTP_PROXY": "other", "No_Proxy": "*",
                "ALL_PROXY": "other", "SAFE": "preserved"}
