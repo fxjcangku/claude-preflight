@@ -21,16 +21,22 @@
   const submit = form.querySelector("button[type=submit]");
   const countryInput = byId("target-input");
   const timezoneInput = byId("timezone-input");
-  const auto = byId("auto-refresh");
   const notice = byId("app-notice");
   const clientNames = { web: "专用网页", desktop: "受管桌面版" };
   const submittingClients = new Set();
   let launchPoll, launchRevision = 0;
   let state = null;
   let readiness = null;
-  let revealIp = false;
+  let revealIp = true;
+  try {
+    const savedReveal = localStorage.getItem("preflight.revealIp");
+    if (savedReveal === "0") revealIp = false;
+  } catch { /* Storage is optional. */ }
   let busy = false;
+  let queuedCheck = false;
   let intervalId;
+  let readinessIntervalId;
+  let lastVpnSignature = null;
   let browserZone = null;
 
   function region(code) {
@@ -556,12 +562,19 @@
     return data;
   }
 
-  async function loadReadiness() {
+  async function loadReadiness(triggerCheckOnChange = false) {
     try {
       const response = await fetch("/api/readiness", { cache: "no-store", signal: AbortSignal.timeout(15000) });
       if (!response.ok) return;
       const data = await response.json();
+      const nextSig = data?.vpn?.vpnSignature || null;
+      const changed = Boolean(lastVpnSignature && nextSig && nextSig !== lastVpnSignature);
+      if (nextSig) lastVpnSignature = nextSig;
       renderReadiness(data);
+      if (triggerCheckOnChange && changed) {
+        if (busy) queuedCheck = true;
+        else check();
+      }
     } catch {
       /* Readiness panel keeps last known reading. */
     }
@@ -578,23 +591,33 @@
   }
 
   async function check() {
-    if (busy) return;
+    if (busy) {
+      queuedCheck = true;
+      return;
+    }
+    queuedCheck = false;
     lock("check");
     showMessage("");
     try {
-      const [payload] = await Promise.all([request("/api/check", {}), loadReadiness()]);
+      const [payload] = await Promise.all([request("/api/check", {}), loadReadiness(false)]);
       render(payload);
       markService("已连接", "good");
     } catch (error) {
       markService("检测请求失败", "bad");
       showMessage("检测未完成。" + error.message + "。请确认本机服务正在运行，然后重试。");
-    } finally { lock(null); }
+    } finally {
+      lock(null);
+      if (queuedCheck) {
+        queuedCheck = false;
+        window.setTimeout(check, 250);
+      }
+    }
   }
 
   async function load() {
     lock("load");
     try {
-      const [payload] = await Promise.all([request("/api/state"), loadReadiness()]);
+      const [payload] = await Promise.all([request("/api/state"), loadReadiness(false)]);
       render(payload);
       markService("已连接", "good");
     } catch (error) {
@@ -605,8 +628,13 @@
   }
 
   window.preflightRefreshAll = () => {
-    loadReadiness();
-    if (!busy) check();
+    loadReadiness(false);
+    check();
+    // Follow-up sync after OneVPN / LaunchAgent settles post-configure or post-restore
+    window.setTimeout(() => {
+      loadReadiness(false);
+      check();
+    }, 2500);
   };
 
   form.addEventListener("submit", async event => {
@@ -660,7 +688,11 @@
     finally { button.disabled = false; }
   });
 
-  byId("ip-toggle").addEventListener("click", () => { revealIp = !revealIp; renderIp(); });
+  byId("ip-toggle").addEventListener("click", () => {
+    revealIp = !revealIp;
+    try { localStorage.setItem("preflight.revealIp", revealIp ? "1" : "0"); } catch { /* Optional. */ }
+    renderIp();
+  });
   const ipCopy = byId("ip-copy");
   if (ipCopy) {
     ipCopy.addEventListener("click", async () => {
@@ -678,14 +710,18 @@
 
   function schedule() {
     clearInterval(intervalId);
-    if (auto.checked) intervalId = window.setInterval(check, 60000);
+    // Always-on automatic network exit refresh every 15s while visible.
+    intervalId = window.setInterval(() => { if (!document.hidden) check(); }, 15000);
   }
-  try { auto.checked = localStorage.getItem("preflight.auto") === "1"; } catch { /* Storage is optional. */ }
-  auto.addEventListener("change", () => {
-    try { localStorage.setItem("preflight.auto", auto.checked ? "1" : "0"); } catch { /* No persistence. */ }
-    schedule();
-  });
+  function scheduleReadinessWatch() {
+    clearInterval(readinessIntervalId);
+    // Lightweight local poll every 3s: keeps prerequisite self-check live and detects VPN node switches immediately.
+    readinessIntervalId = window.setInterval(() => {
+      if (!document.hidden) loadReadiness(true);
+    }, 3000);
+  }
   schedule();
+  scheduleReadinessWatch();
 
   const anchors = [...document.querySelectorAll('.primary-nav a[href^="#"]')];
   function updateNav() {
@@ -706,12 +742,14 @@
   window.addEventListener("scroll", updateNav, { passive: true });
   window.addEventListener("hashchange", updateNav);
   let lastFocusRefresh = 0;
-  window.addEventListener("focus", () => {
+  function refreshOnReturn() {
     const now = Date.now();
-    if (now - lastFocusRefresh < 2500) return;
+    if (now - lastFocusRefresh < 1500) return;
     lastFocusRefresh = now;
-    loadReadiness();
-  });
+    loadReadiness(true);
+  }
+  window.addEventListener("focus", refreshOnReturn);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshOnReturn(); });
   if ("ResizeObserver" in window) new ResizeObserver(drawChart).observe(byId("history-chart").parentElement);
   else window.addEventListener("resize", drawChart);
   updateNav();

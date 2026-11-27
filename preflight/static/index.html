@@ -68,7 +68,7 @@
         <p class="updated">上次检测 <time id="last-updated">—</time> · 目标 🇹🇼 台湾（TW / Asia/Taipei）</p>
       </div>
       <div class="intro-actions">
-        <label class="switch-control" for="auto-refresh"><input type="checkbox" id="auto-refresh" role="switch"><span class="switch-track" aria-hidden="true"></span><span>自动刷新</span></label>
+        <span class="live-indicator" title="每 3 秒自动监测节点与前置条件，切节点后立即重测出口">实时自动监测</span>
         <button id="refresh-button" class="button primary-button" type="button"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg><span>立即检测</span></button>
       </div>
     </header>
@@ -94,7 +94,7 @@
             <span class="field-caption">公网出口 IP</span>
             <div class="ip-line">
               <span id="exit-ip">—</span>
-              <button id="ip-toggle" type="button" class="icon-button" aria-label="显示完整 IP" aria-pressed="false" title="显示或隐藏完整 IP"><svg class="icon eye-open" aria-hidden="true"><use href="#i-eye"/></svg><svg class="icon eye-closed" aria-hidden="true"><use href="#i-eye-off"/></svg></button>
+              <button id="ip-toggle" type="button" class="icon-button" aria-label="隐藏完整 IP" aria-pressed="true" title="显示或隐藏完整 IP"><svg class="icon eye-open" aria-hidden="true"><use href="#i-eye"/></svg><svg class="icon eye-closed" aria-hidden="true"><use href="#i-eye-off"/></svg></button>
               <button id="ip-copy" type="button" class="icon-button" aria-label="复制 IP" title="复制公网 IP" disabled><svg class="icon" aria-hidden="true"><use href="#i-copy"/></svg></button>
               <span id="ip-copy-hint" class="copy-hint" role="status" aria-live="polite"></span>
             </div>

@@ -227,6 +227,16 @@ class VpnSetupTests(unittest.TestCase):
             self.assertEqual(bad["status"], "error")
             self.assertEqual(bad["measuredCountry"], "SG")
 
+    def test_vpn_signature_changes_immediately_when_node_switches(self):
+        with patch.object(vpn, "detect_installed_vpns", return_value=[{"name": "OneVPN", "running": True, "autoConfigSupported": True}]), \
+             patch.object(vpn, "_detect_system_proxy_info", return_value=(True, "HTTPS", "127.0.0.1:7890", 7890)), \
+             patch.object(vpn, "_active_utun_interfaces", return_value=["utun4"]):
+            sig1 = vpn.inspect_vpn_status(live_probe=False)["vpnSignature"]
+            self.config["profiles"][0]["selectedMap"]["Proxies"] = "极速|🇹🇼 台湾 01"
+            sig2 = vpn.inspect_vpn_status(live_probe=False)["vpnSignature"]
+        self.assertTrue(sig1)
+        self.assertNotEqual(sig1, sig2)
+
 
 if __name__ == "__main__":
     unittest.main()

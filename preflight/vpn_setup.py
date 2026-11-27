@@ -916,6 +916,7 @@ def inspect_vpn_status(live_probe=False):
         "backupAvailable": False,
         "liveCountry": None,
         "verified": False,
+        "vpnSignature": "",
         "state": "unknown",
         "detail": "",
     }
@@ -964,6 +965,16 @@ def inspect_vpn_status(live_probe=False):
                 rules_enabled and not conflict and status["taiwanSelected"]
                 and all(domain in found for domain in _CLAUDE_DOMAINS)
             )
+            sig_source = json.dumps([
+                profile_id,
+                selected or "",
+                (config.get("appSetting") or {}).get("lastSelectedNodeIndex"),
+                status["running"],
+                status["proxyAddress"] or "",
+                status["tunnels"],
+                status["claudeRulesReady"],
+            ], ensure_ascii=True).encode("utf-8")
+            status["vpnSignature"] = hashlib.sha256(sig_source).hexdigest()[:16]
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             status["detail"] = str(exc)
 
@@ -1023,6 +1034,14 @@ def inspect_vpn_status(live_probe=False):
             status["state"] = "ok" if (status["proxyReady"] or status["tunnelReady"]) else "pending"
             extra = f"，发现 {status['taiwanCandidates']} 个台湾候选节点" if status["taiwanCandidates"] else ""
             status["detail"] = f"已自动识别 {app_label}（{status['proxyAddress'] or 'TUN 隧道'}）{extra}，请以实测出口 TW 为准"
+    if not status["vpnSignature"]:
+        sig_source = json.dumps([
+            status["activeApp"] or "",
+            status["running"],
+            status["proxyAddress"] or "",
+            status["tunnels"],
+        ], ensure_ascii=True).encode("utf-8")
+        status["vpnSignature"] = hashlib.sha256(sig_source).hexdigest()[:16]
     return status
 
 
